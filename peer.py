@@ -1,5 +1,5 @@
 import socket
-from threading import Thread
+import threading
 import json
 import time
 import random
@@ -13,9 +13,8 @@ class PeerNode:
         self.seeds = self.read_config(config_file)
         self.connected_peers = set()  # Just store (ip, port) tuples
         self.message_list = set()  # Store message hashes we've seen
-        self.msg_counter = 0
         
-        # Setup UDP socket like in gossip.py
+        # Setup UDP socket
         self.node = socket.socket(type=socket.SOCK_DGRAM)
         self.node.bind((host, port))
         print(f"Peer node starting on {host}:{port}")
@@ -31,13 +30,19 @@ class PeerNode:
         
     def start(self):
         # Start receiving messages
-        Thread(target=self.receive_message).start()
+        threading.Thread(target=self.receive_message, daemon=True).start()
         
-        # Register with seeds and get peer list
-        self.register_with_seeds()
+        # Register with (n/2)+1 random seeds
+        num_seeds = len(self.seeds)
+        num_connections = (num_seeds // 2) + 1
+        selected_seeds = random.sample(self.seeds, num_connections)
+        print(f"Connecting to {num_connections} seeds: {selected_seeds}")
         
-        # Start generating messages
-        self.generate_messages()
+        for seed in selected_seeds:
+            self.register_with_seed(seed)
+            
+        # Start message input loop
+        self.input_loop()
         
     def receive_message(self):
         while True:
@@ -52,17 +57,17 @@ class PeerNode:
             except Exception as e:
                 print(f"Error receiving message: {e}")
                 
-    def register_with_seeds(self):
-        for seed in self.seeds:
-            try:
-                message = {
-                    'type': 'register',
-                    'ip': self.host,
-                    'port': self.port
-                }
-                self.node.sendto(json.dumps(message).encode(), seed)
-            except Exception as e:
-                print(f"Failed to register with seed {seed}: {e}")
+    def register_with_seed(self, seed):
+        try:
+            message = {
+                'type': 'register',
+                'ip': self.host,
+                'port': self.port
+            }
+            self.node.sendto(json.dumps(message).encode(), seed)
+            print(f"Registered with seed {seed}")
+        except Exception as e:
+            print(f"Failed to register with seed {seed}: {e}")
                 
     def handle_peer_list(self, peers):
         for peer in peers:
@@ -70,18 +75,21 @@ class PeerNode:
                 self.connected_peers.add(tuple(peer))
         print(f"Updated peer list: {self.connected_peers}")
         
-    def generate_messages(self):
-        while self.msg_counter < 10:
-            time.sleep(5)
-            message = f"{time.time()}:{self.host}:{self.msg_counter}"
-            print(f"Generating message: {message}")
-            self.broadcast_message(message)
-            self.msg_counter += 1
+    def input_loop(self):
+        print("\nEnter messages to broadcast (Ctrl+C to exit):")
+        while True:
+            try:
+                message = input("> ")
+                if message:
+                    self.broadcast_message(message)
+            except KeyboardInterrupt:
+                print("\nExiting...")
+                break
             
     def broadcast_message(self, message):
         msg_data = {
             'type': 'gossip',
-            'message': message
+            'message': f"{self.host}:{self.port} - {message}"
         }
         encoded_msg = json.dumps(msg_data).encode()
         
@@ -95,7 +103,8 @@ class PeerNode:
                 
     def handle_gossip(self, message, sender):
         if message not in self.message_list:
-            print(f"New message from {sender}: {message}")
+            print(f"\nNew message from {sender}: {message}")
+            print("> ", end='', flush=True)  # Restore input prompt
             self.message_list.add(message)
             self.broadcast_message(message)
 
