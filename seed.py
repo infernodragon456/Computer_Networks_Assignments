@@ -11,25 +11,38 @@ class SeedNode:
         self.peer_list = set()  # Store (ip, port) tuples
         self.lock = threading.Lock()
         
-        # Setup UDP socket
-        self.node = socket.socket(type=socket.SOCK_DGRAM)
-        self.node.bind((host, port))
+        # Setup TCP server socket
+        self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server.bind((host, port))
+        self.server.listen(5)
         print(f"Seed node starting on {host}:{port}")
         
     def start(self):
         while True:
             try:
-                data, address = self.node.recvfrom(1024)
-                message = json.loads(data.decode())
+                client_sock, address = self.server.accept()
+                threading.Thread(target=self.handle_client, 
+                              args=(client_sock, address),
+                              daemon=True).start()
+            except Exception as e:
+                print(f"Error accepting connection: {e}")
+                
+    def handle_client(self, client_sock, address):
+        try:
+            data = client_sock.recv(1024).decode()
+            if data:
+                message = json.loads(data)
+                print(f"Received from {address}: {message}")
                 
                 if message['type'] == 'register':
-                    self.register_peer(message['ip'], message['port'], address)
-                elif message['type'] == 'get_peers':
-                    self.send_peer_list(address)
-            except Exception as e:
-                print(f"Error handling message: {e}")
-                
-    def register_peer(self, ip, port, address):
+                    self.register_peer(message['ip'], message['port'], client_sock)
+                    
+        except Exception as e:
+            print(f"Error handling client {address}: {e}")
+        finally:
+            client_sock.close()
+            
+    def register_peer(self, ip, port, client_sock):
         with self.lock:
             peer = (ip, port)
             self.peer_list.add(peer)
@@ -40,17 +53,7 @@ class SeedNode:
                 'type': 'peers',
                 'peers': list(self.peer_list)
             }
-            self.node.sendto(json.dumps(response).encode(), address)
-            
-    def send_peer_list(self, address):
-        with self.lock:
-            peers = list(self.peer_list)
-            response = {
-                'type': 'peers',
-                'peers': peers
-            }
-            print(f"Sending peer list: {response}")
-            self.node.sendto(json.dumps(response).encode(), address)
+            client_sock.send(json.dumps(response).encode())
 
 if __name__ == "__main__":
     import sys
