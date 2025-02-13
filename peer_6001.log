@@ -1,0 +1,24 @@
+2025-02-13 21:54:30,277 - Peer node starting on 127.0.0.1:6001
+2025-02-13 21:54:30,279 - Failed to connect to peer ['127.0.0.1', 6001]: connect(): AF_INET address must be tuple, not list
+2025-02-13 21:54:30,282 - Failed to connect to peer ['127.0.0.1', 6001]: connect(): AF_INET address must be tuple, not list
+2025-02-13 21:54:30,283 - Failed to connect to peer ['127.0.0.1', 6000]: connect(): AF_INET address must be tuple, not list
+2025-02-13 21:57:51,822 - Peer node starting on 127.0.0.1:6001
+2025-02-13 21:57:53,842 - Failed to connect to seed ('127.0.0.1', 5000): [WinError 10061] No connection could be made because the target machine actively refused it
+2025-02-13 21:57:53,847 - Failed to connect to peer ['127.0.0.1', 6001]: connect(): AF_INET address must be tuple, not list
+2025-02-13 21:57:53,847 - Failed to connect to peer ['127.0.0.1', 6000]: connect(): AF_INET address must be tuple, not list
+2025-02-13 22:04:23,477 - Peer node starting on 127.0.0.1:6001
+2025-02-13 22:04:23,481 - Failed to connect to peer ['127.0.0.1', 6001]: connect(): AF_INET address must be tuple, not list
+2025-02-13 22:04:23,483 - Failed to connect to peer ['127.0.0.1', 6001]: connect(): AF_INET address must be tuple, not list
+2025-02-13 22:04:23,484 - Failed to connect to peer ['127.0.0.1', 6000]: connect(): AF_INET address must be tuple, not list
+2025-02-13 22:19:09,620 - Peer node starting on 127.0.0.1:6001
+2025-02-13 22:19:09,628 - Failed to connect to peer ['127.0.0.1', 6001]: connect(): AF_INET address must be tuple, not list
+2025-02-13 22:19:09,631 - Failed to connect to peer ['127.0.0.1', 6000]: connect(): AF_INET address must be tuple, not list
+2025-02-13 22:19:09,632 - Failed to connect to peer ['127.0.0.1', 6001]: connect(): AF_INET address must be tuple, not list
+2025-02-13 22:29:41,689 - Peer node starting on 127.0.0.1:6001
+2025-02-13 22:29:54,710 - Error handling peer ('127.0.0.1', 6000): [WinError 10053] An established connection was aborted by the software in your host machine
+2025-02-13 22:31:15,253 - Error accepting connection: can't create new thread at interpreter shutdown
+2025-02-13 22:48:01,605 - Peer node starting on 127.0.0.1:6001
+2025-02-13 22:48:46,648 - Error handling peer ('127.0.0.1', 6000): [WinError 10053] An established connection was aborted by the software in your host machine
+2025-02-13 22:53:06,127 - Peer node starting on 127.0.0.1:6001
+2025-02-13 22:59:23,259 - Peer node starting on 127.0.0.1:6001
+2025-02-13 23:05:06,804 - Peer node starting on 127.0.0.1:6001

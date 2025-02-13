@@ -1,0 +1,31 @@
+2025-02-13 21:51:56,188 - Seed node starting on 127.0.0.1:5000
+2025-02-13 21:53:54,794 - New peer registered: 127.0.0.1:6000
+2025-02-13 22:02:44,565 - Seed node starting on 127.0.0.1:5000
+2025-02-13 22:04:23,480 - New peer registered: 127.0.0.1:6001
+2025-02-13 22:09:27,727 - Error handling client: [WinError 10054] An existing connection was forcibly closed by the remote host
+2025-02-13 22:18:02,467 - Seed node starting on 127.0.0.1:5000
+2025-02-13 22:18:51,953 - New peer registered: 127.0.0.1:6000
+2025-02-13 22:21:50,189 - Error handling client: [WinError 10054] An existing connection was forcibly closed by the remote host
+2025-02-13 22:28:26,726 - Seed node starting on 127.0.0.1:5000
+2025-02-13 22:29:32,365 - New peer registered: 127.0.0.1:6000
+2025-02-13 22:30:30,665 - Error handling client: [WinError 10054] An existing connection was forcibly closed by the remote host
+2025-02-13 22:31:15,256 - New peer registered: 127.0.0.1:6000
+2025-02-13 22:33:46,299 - Error handling client: [WinError 10054] An existing connection was forcibly closed by the remote host
+2025-02-13 22:38:31,482 - Seed node starting on 127.0.0.1:5000
+2025-02-13 22:47:55,189 - New peer registered: 127.0.0.1:6000
+2025-02-13 22:51:22,747 - Error handling client: [WinError 10054] An existing connection was forcibly closed by the remote host
+2025-02-13 22:52:38,690 - Seed node starting on 127.0.0.1:5000
+2025-02-13 22:52:59,276 - New peer registered: 127.0.0.1:6000
+2025-02-13 22:53:06,128 - New peer registered: 127.0.0.1:6001
+2025-02-13 22:57:37,973 - Error handling client: [WinError 10054] An existing connection was forcibly closed by the remote host
+2025-02-13 22:57:38,438 - Error handling client: [WinError 10054] An existing connection was forcibly closed by the remote host
+2025-02-13 22:58:50,646 - Seed node starting on 127.0.0.1:5000
+2025-02-13 22:59:12,474 - New peer registered: 127.0.0.1:6000. Current peers: {('127.0.0.1', 6000)}
+2025-02-13 22:59:23,263 - New peer registered: 127.0.0.1:6001. Current peers: {('127.0.0.1', 6000), ('127.0.0.1', 6001)}
+2025-02-13 23:02:20,452 - Error handling client: [WinError 10054] An existing connection was forcibly closed by the remote host
+2025-02-13 23:02:20,890 - Error handling client: [WinError 10054] An existing connection was forcibly closed by the remote host
+2025-02-13 23:04:21,468 - Seed node starting on 127.0.0.1:5000
+2025-02-13 23:04:59,350 - New peer registered: 127.0.0.1:6000. Current peers: {('127.0.0.1', 6000)}
+2025-02-13 23:11:59,494 - Error handling client: [WinError 10054] An existing connection was forcibly closed by the remote host
+2025-02-13 23:13:37,909 - Seed node starting on 127.0.0.1:5000
+2025-02-13 23:14:03,329 - Error handling client: Extra data: line 1 column 54 (char 53)
