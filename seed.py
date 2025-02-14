@@ -36,6 +36,9 @@ class SeedNode:
                 
                 if message['type'] == 'register':
                     self.register_peer(message['ip'], message['port'], client_sock)
+                if message['type'] == 'dead_peer':
+                    print("Deletion request received for ",message['ip'], message['port'])
+                    self.remove_dead_peer(message['ip'], message['port'])
                     
         except Exception as e:
             print(f"Error handling client {address}: {e}")
@@ -54,6 +57,17 @@ class SeedNode:
                 'peers': list(self.peer_list)
             }
             client_sock.send(json.dumps(response).encode())
+
+    def remove_dead_peer(self, ip, port):
+        """Remove a dead peer from the peer list."""
+        with self.lock:
+            dead_peer = (ip, port)
+            print("level 1", dead_peer, self.peer_list)
+            if dead_peer in self.peer_list:
+                print("level 2")
+                self.peer_list.remove(dead_peer)
+                print(f"Removed dead peer: {ip}:{port}. Current peers: {self.peer_list}")
+
 
 if __name__ == "__main__":
     import sys
