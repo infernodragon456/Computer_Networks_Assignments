@@ -83,7 +83,11 @@ python peer.py <peer_ip> <peer_port> <config_file>
 
 ## Logging Mechanism
 Each peer and seed maintains a log file to record all communication and system events.
-
+Files name:-
+### For Seed
+```sh
+seed_<ip_address>_<seed_port>.log
+```
 
 ### Seed Logs
 Each seed logs received messages with timestamps:
@@ -92,10 +96,14 @@ Each seed logs received messages with timestamps:
 [2025-02-16 22:13:46] New peer registered: 127.0.0.1:6001. Current peers: {('127.0.0.1', 6001)}
 ```
 
+### For Peer
+```sh
+peer_<ip_address>_<peer_port>.log
+```
+
 ### Peer Logs
 Each peer logs received messages with timestamps:
 ```sh
 [2025-02-16 22:04:54] Received from ('127.0.0.1', 6000): 127.0.0.1:6001 - 2025-02-16 22:04:54:127.0.0.1:'Hi checking the working 0'
 [2025-02-16 22:04:59] Received from ('127.0.0.1', 6000): 127.0.0.1:6001 - 2025-02-16 22:04:59:127.0.0.1:'Hi checking the working 1'
 ```
-
