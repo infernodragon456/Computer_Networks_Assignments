@@ -15,6 +15,7 @@ This project implements a **Peer-to-Peer Gossip Protocol** with some **Seed Node
 - **Gossip Message Propagation**: Peers broadcast messages to connected nodes, which then propagate the message to others.
 - **Failure Detection**: Periodic heartbeat checks ensure peers are alive, and unresponsive peers are removed.
 - **Threaded Communication**: Each peer runs in a multi-threaded mode to handle concurrent connections.
+- **Logging Mechanism**: Each seed and peer logs communication and system events for monitoring and debugging.
 
 ---
 
@@ -78,3 +79,23 @@ python peer.py <peer_ip> <peer_port> <config_file>
 ### Sending Messages
 - After starting `peer.py`, type messages in the console to broadcast them.  
 - Type `exit` to stop message input.
+
+
+## Logging Mechanism
+Each peer and seed maintains a log file to record all communication and system events.
+
+
+### Seed Logs
+Each seed logs received messages with timestamps:
+```sh
+[2025-02-16 22:04:52] New peer registered: 127.0.0.1:6000. Current peers: {('127.0.0.1', 6000)}
+[2025-02-16 22:13:46] New peer registered: 127.0.0.1:6001. Current peers: {('127.0.0.1', 6001)}
+```
+
+### Peer Logs
+Each peer logs received messages with timestamps:
+```sh
+[2025-02-16 22:04:54] Received from ('127.0.0.1', 6000): 127.0.0.1:6001 - 2025-02-16 22:04:54:127.0.0.1:'Hi checking the working 0'
+[2025-02-16 22:04:59] Received from ('127.0.0.1', 6000): 127.0.0.1:6001 - 2025-02-16 22:04:59:127.0.0.1:'Hi checking the working 1'
+```
+
