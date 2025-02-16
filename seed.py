@@ -1,7 +1,6 @@
 import socket
 import threading
 import json
-import logging
 from datetime import datetime
 
 class SeedNode:
@@ -11,53 +10,85 @@ class SeedNode:
         self.peer_list = set()  # Store (ip, port) tuples
         self.lock = threading.Lock()
         self.log_file = f"seed_{host}_{port}.log"
+        self.output_file = "output.txt"
         
         # Setup TCP server socket
         self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server.bind((host, port))
         self.server.listen(5)
-        print(f"Seed node starting on {host}:{port}")
+        self.log_message(f"Seed node starting on {host}:{port}")
+        
+    def log_message(self, message):
+        """Log messages to console, seed log file, and output file."""
+        timestamp = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
+        log_entry = f"{timestamp} [{self.host}:{self.port}] {message}"
+        
+        # Print to console
+        print(log_entry)
+        
+        # Write to seed-specific log file
+        with open(self.log_file, 'a') as f:
+            f.write(log_entry + "\n")
+            
+        # Write to common output file
+        with open(self.output_file, 'a') as f:
+            f.write(log_entry + "\n")
         
     def start(self):
         while True:
             try:
                 client_sock, address = self.server.accept()
+                self.log_message(f"Accepted connection from {address}")
                 threading.Thread(target=self.handle_client, 
                               args=(client_sock, address),
                               daemon=True).start()
             except Exception as e:
-                print(f"Error accepting connection: {e}")
+                self.log_message(f"Error accepting connection: {e}")
                 
     def handle_client(self, client_sock, address):
         try:
             data = client_sock.recv(1024).decode()
-            if data:
-                message = json.loads(data)
-                print(f"Received from {address}: {message}")
+            if not data:
+                self.log_message("Received empty request, ignoring.")
+                return
                 
-                if message['type'] == 'register':
-                    self.register_peer(message['ip'], message['port'], client_sock)
-                if message['type'] == 'dead_peer':
-                    print("Deletion request received for ",message['ip'], message['port'])
-                    self.remove_dead_peer(message['ip'], message['port'])
-                    
+            message = json.loads(data)
+            self.log_message(f"Received from {address}: {message}")
+            
+            if message['type'] == 'register':
+                self.register_peer(message['ip'], message['port'], client_sock)
+                
+            elif message['type'] == 'get_peers':
+                with self.lock:
+                    response = {
+                        'type': 'peers',
+                        'peers': list(self.peer_list)
+                    }
+                client_sock.send(json.dumps(response).encode())
+                self.log_message(f"Sent peer list to {address}")
+                
+            elif message['type'] == 'dead_peer':
+                self.remove_dead_peer(message['ip'], message['port'])
+                self.log_message(f"Processed dead peer notification: {message['message']}")
+                
         except Exception as e:
-            print(f"Error handling client {address}: {e}")
+            self.log_message(f"Error handling client {address}: {e}")
         finally:
             client_sock.close()
             
     def register_peer(self, ip, port, client_sock):
+        """Register a new peer and send current peer list."""
         with self.lock:
             peer = (ip, port)
             self.peer_list.add(peer)
-            log_msg = f"New peer registered: {ip}:{port}. Current peers: {self.peer_list}"
-            print(log_msg)
-            self.log_to_file(log_msg)
+            self.log_message(f"New peer registered: {ip}:{port}")
+            self.log_message(f"Current peers: {self.peer_list}")
             
             # Send current peer list to the new peer
             response = {
                 'type': 'peers',
-                'peers': list(self.peer_list)
+                'peers': list(self.peer_list),
+                'status': 'success'
             }
             client_sock.send(json.dumps(response).encode())
 
@@ -67,16 +98,8 @@ class SeedNode:
             dead_peer = (ip, port)
             if dead_peer in self.peer_list:
                 self.peer_list.remove(dead_peer)
-                log_msg = f"Removed dead peer: {ip}:{port}. Current peers: {self.peer_list}"
-                print(log_msg)
-                self.log_to_file(log_msg)
-
-    def log_to_file(self, message):
-        """Log messages to output file."""
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open(self.log_file, 'a') as f:
-            f.write(f"[{timestamp}] {message}\n")
-
+                self.log_message(f"Removed dead peer: {ip}:{port}")
+                self.log_message(f"Current peers: {self.peer_list}")
 
 if __name__ == "__main__":
     import sys
@@ -86,5 +109,14 @@ if __name__ == "__main__":
         
     host = sys.argv[1]
     port = int(sys.argv[2])
+    
+    # Add seed to config.txt if not already present
+    config = f"{host}:{port}\n"
+    with open("config.txt", "r+") as file:
+        lines = file.readlines()
+        if config not in lines:
+            file.seek(0, 2)  # Go to end of file
+            file.write(config)
+    
     seed = SeedNode(host, port)
     seed.start() 
