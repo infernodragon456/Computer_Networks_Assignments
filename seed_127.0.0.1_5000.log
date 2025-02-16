@@ -1,0 +1,6 @@
+[2025-02-16 22:04:52] New peer registered: 127.0.0.1:6000. Current peers: {('127.0.0.1', 6000)}
+[2025-02-16 22:13:46] New peer registered: 127.0.0.1:6001. Current peers: {('127.0.0.1', 6001)}
+[2025-02-16 22:37:56] New peer registered: 127.0.0.1:6000. Current peers: {('127.0.0.1', 6000)}
+[2025-02-16 22:42:58] New peer registered: 127.0.0.1:6001. Current peers: {('127.0.0.1', 6001)}
+[2025-02-16 22:52:34] New peer registered: 127.0.0.1:6000. Current peers: {('127.0.0.1', 6000)}
+[2025-02-16 22:52:36] New peer registered: 127.0.0.1:6001. Current peers: {('127.0.0.1', 6000), ('127.0.0.1', 6001)}

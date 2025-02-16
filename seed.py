@@ -10,6 +10,7 @@ class SeedNode:
         self.port = port
         self.peer_list = set()  # Store (ip, port) tuples
         self.lock = threading.Lock()
+        self.log_file = f"seed_{host}_{port}.log"
         
         # Setup TCP server socket
         self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -49,7 +50,9 @@ class SeedNode:
         with self.lock:
             peer = (ip, port)
             self.peer_list.add(peer)
-            print(f"New peer registered: {ip}:{port}. Current peers: {self.peer_list}")
+            log_msg = f"New peer registered: {ip}:{port}. Current peers: {self.peer_list}"
+            print(log_msg)
+            self.log_to_file(log_msg)
             
             # Send current peer list to the new peer
             response = {
@@ -62,11 +65,17 @@ class SeedNode:
         """Remove a dead peer from the peer list."""
         with self.lock:
             dead_peer = (ip, port)
-            print("level 1", dead_peer, self.peer_list)
             if dead_peer in self.peer_list:
-                print("level 2")
                 self.peer_list.remove(dead_peer)
-                print(f"Removed dead peer: {ip}:{port}. Current peers: {self.peer_list}")
+                log_msg = f"Removed dead peer: {ip}:{port}. Current peers: {self.peer_list}"
+                print(log_msg)
+                self.log_to_file(log_msg)
+
+    def log_to_file(self, message):
+        """Log messages to output file."""
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(self.log_file, 'a') as f:
+            f.write(f"[{timestamp}] {message}\n")
 
 
 if __name__ == "__main__":

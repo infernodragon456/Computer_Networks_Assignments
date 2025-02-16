@@ -14,6 +14,7 @@ class PeerNode:
         self.port = port
         self.seeds = self.read_config(config_file)
         self.connected_peers = {}  # {(ip, port): socket}
+        self.peers_lock = threading.Lock()  # Add this line
         self.message_list = {}  # {msg_hash: set(peers_who_have_message)}
         self.ping_failures = {}  # Track ping failures for each peer
         self.ping_interval = 13  # Ping every 13 seconds
@@ -39,8 +40,8 @@ class PeerNode:
         # Start accepting connections
         threading.Thread(target=self.accept_connections, daemon=True).start()
 
-        # checking the liveliness of peers (commented issue is here)
-        # threading.Thread(target=self.liveness_check_loop, daemon=True).start()
+        # Uncomment the liveness checking
+        threading.Thread(target=self.liveness_check_loop, daemon=True).start()
         
         # Register with (n/2)+1 random seeds
         num_seeds = len(self.seeds)
@@ -68,7 +69,8 @@ class PeerNode:
     def handle_peer_connection(self, sock, address):
         """Handle incoming peer connection"""
         try:
-            self.connected_peers[address] = sock
+            with self.peers_lock:
+                self.connected_peers[address] = sock
             while True:
                 data = sock.recv(1024).decode()
                 if not data:
@@ -77,12 +79,15 @@ class PeerNode:
                 message = json.loads(data)
                 if message['type'] == 'gossip':
                     self.handle_gossip(message, address)
+                elif message['type'] == 'heartbeat':  # Add handling for heartbeat messages
+                    continue  # Just acknowledge receipt by doing nothing
                     
         except Exception as e:
             print(f"Error handling peer {address}: {e}")
         finally:
-            if address in self.connected_peers:
-                del self.connected_peers[address]
+            with self.peers_lock:
+                if address in self.connected_peers:
+                    del self.connected_peers[address]
             sock.close()
             
     def register_with_seed(self, seed):
@@ -119,8 +124,8 @@ class PeerNode:
                     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                     sock.connect(peer)
                     print(f"Connected to peer {peer}")
+                    self.log_to_file(f"Connected to peer {peer}")
                     self.connected_peers[peer] = sock
-                    # Start thread to handle messages from this peer
                     threading.Thread(target=self.handle_peer_connection, 
                                   args=(sock, peer),
                                   daemon=True).start()
@@ -140,21 +145,22 @@ class PeerNode:
         """Broadcast a message to peers who haven't seen it yet"""
         msg_data = {
             'type': 'gossip',
-            'message': f"{self.host}:{self.port} - {message}",  # Include sender info in message
-            'timestamp': time.time()  # Add timestamp for uniqueness
+            'message': f"{self.host}:{self.port} - {message}",
+            'timestamp': time.time()
         }
         msg_str = json.dumps(msg_data)
         msg_hash = hashlib.sha256(msg_str.encode()).hexdigest()
         
-        # Initialize message in ML if it's new
         if msg_hash not in self.message_list:
             self.message_list[msg_hash] = set()
             
         print(f"Broadcasting message {msg_hash[:8]}")
         dead_peers = []
         
-        for peer, sock in self.connected_peers.items():
-            # Only send to peers who haven't seen this message
+        with self.peers_lock:  # Acquire lock before accessing connected_peers
+            peers_to_message = list(self.connected_peers.items())
+        
+        for peer, sock in peers_to_message:
             if peer not in self.message_list[msg_hash]:
                 try:
                     sock.send(msg_str.encode())
@@ -163,13 +169,15 @@ class PeerNode:
                 except Exception as e:
                     print(f"Failed to send to {peer}: {e}")
                     dead_peers.append(peer)
-                    
-        # Clean up dead connections
-        for peer in dead_peers:
-            if peer in self.connected_peers:
-                self.connected_peers[peer].close()
-                del self.connected_peers[peer]
-                
+        
+        # Clean up dead connections with lock
+        if dead_peers:
+            with self.peers_lock:
+                for peer in dead_peers:
+                    if peer in self.connected_peers:
+                        self.connected_peers[peer].close()
+                        del self.connected_peers[peer]
+
     def handle_gossip(self, message_data, sender):
         """Handle incoming gossip message"""
         msg_str = json.dumps(message_data)
@@ -177,7 +185,10 @@ class PeerNode:
         
         # If we haven't seen this message before
         if msg_hash not in self.message_list:
-            print(f"\nReceived: {message_data['message']}")
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            received_msg = f"[{timestamp}] Received from {sender}: {message_data['message']}"
+            print(f"\n{received_msg}")
+            self.log_to_file(received_msg)
             print("> ", end='', flush=True)  # Restore input prompt
             
             # Add to message list and mark as received from sender
@@ -189,23 +200,23 @@ class PeerNode:
                     try:
                         sock.send(msg_str.encode())
                         self.message_list[msg_hash].add(peer)
-                        print(f"Forwarded to {peer}")
+                        self.log_to_file(f"Forwarded to {peer}")
                     except Exception as e:
                         print(f"Failed to forward to {peer}: {e}")
         else:
             print(f"\nDuplicate message {msg_hash[:8]}")
             print("> ", end='', flush=True)
 
-    def ping_peer(self, peer_ip):
-        """Send a heartbeat message to check if the peer is alive."""
-        try:
-            sock = self.connected_peers.get(peer)
-            if sock:
-                sock.send(json.dumps({'type': 'heartbeat'}).encode())
-                return True
-        except Exception as e:
-            print(f"Error sending heartbeat to {peer}: {e}")
-        return False
+    # def ping_peer(self, peer):
+    #     """Send a heartbeat message to check if the peer is alive."""
+    #     try:
+    #         sock = self.connected_peers.get(peer)
+    #         if sock:
+    #             sock.send(json.dumps({'type': 'heartbeat'}).encode())
+    #             return True
+    #     except Exception as e:
+    #         print(f"Error sending heartbeat to {peer}: {e}")
+    #     return False
 
     def liveness_check_loop(self):
         """Periodically check the liveness of connected peers."""
@@ -214,25 +225,46 @@ class PeerNode:
             self.check_peer_liveness()
 
     def check_peer_liveness(self):
-        """Check the liveness of all connected peers."""
+        """Check the liveness of connected peers."""
         dead_peers = []
-        for peer in list(self.connected_peers.keys()):
-            # peer_ip = peer[0]
-            if not self.ping_peer(peer):
+        
+        with self.peers_lock:  # Acquire lock before accessing connected_peers
+            peers_to_check = list(self.connected_peers.keys())
+        
+        for peer in peers_to_check:
+            peer_ip = peer[0]
+            peer_port = peer[1]
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(5)
+                sock.connect((peer_ip, peer_port))
+                sock.send(json.dumps({"type": "ping"}).encode())
+                response = json.loads(sock.recv(1024).decode())
+                if response["type"] == "pong":
+                    self.ping_failures[(peer_ip, peer_port)] = 0
+                sock.close()
+            except Exception as e:
                 self.ping_failures[peer] = self.ping_failures.get(peer, 0) + 1
+                self.log_to_file(f"Ping failed for {peer_ip}:{peer_port}: {e}")
+                
                 if self.ping_failures[peer] >= self.max_ping_failures:
-                    print(f"Peer {peer} is not responding. Notifying seed nodes...")
+                    dead_msg = f"Dead Node:{peer_ip}:{peer_port}:{datetime.now()}:{self.host}"
+                    print(f"\n{dead_msg}")
+                    self.log_to_file(dead_msg)
                     self.notify_seed_of_dead_peer(peer)
                     dead_peers.append(peer)
-            else:
-                self.ping_failures[peer] = 0    # Reset failure count if peer responds
 
-        # Clean up dead peers
-        for peer in dead_peers:
-            self.cleanup_dead_peer(peer)
+        # Clean up dead peers with lock
+        if dead_peers:
+            with self.peers_lock:
+                for peer in dead_peers:
+                    self.cleanup_dead_peer(peer)
 
     def notify_seed_of_dead_peer(self, dead_peer):
         """Notify seed nodes that a peer is dead."""
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        dead_msg = f"Dead Node:{dead_peer[0]}:{dead_peer[1]}:{timestamp}:{self.host}"
+        
         for seed in self.seeds:
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -240,7 +272,8 @@ class PeerNode:
                 message = {
                     'type': 'dead_peer',
                     'ip': dead_peer[0],
-                    'port': dead_peer[1]
+                    'port': dead_peer[1],
+                    'message': dead_msg
                 }
                 sock.send(json.dumps(message).encode())
                 sock.close()
@@ -249,15 +282,22 @@ class PeerNode:
 
     def cleanup_dead_peer(self, dead_peer):
         """Clean up a dead peer from the connected peers and message list."""
-        if dead_peer in self.connected_peers:
-            self.connected_peers[dead_peer].close()
-            del self.connected_peers[dead_peer]
+        with self.peers_lock:  # Add lock here too
+            if dead_peer in self.connected_peers:
+                self.connected_peers[dead_peer].close()
+                del self.connected_peers[dead_peer]
         if dead_peer in self.ping_failures:
             del self.ping_failures[dead_peer]
         # Remove the peer from the message list
         for msg_hash in self.message_list:
             if dead_peer in self.message_list[msg_hash]:
                 self.message_list[msg_hash].remove(dead_peer)
+
+    def log_to_file(self, message):
+        """Log messages to output file."""
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(f"peer_{self.host}_{self.port}.log", 'a') as f:
+            f.write(f"[{timestamp}] {message}\n")
 
 if __name__ == "__main__":
     import sys
