@@ -1,0 +1,28 @@
+# Network Topology Configuration
+# Format: <parameter> <value>
+# By B22CS061 & B22CS062
+
+# Number of nodes
+NUM_SERVERS 5
+NUM_CLIENTS 3
+# By B22CS061 & B22CS062
+
+# Client-to-Server connections
+# Format: CLIENT_<client_id>_SERVERS <server_id1>,<server_id2>,...
+CLIENT_0_SERVERS 0,1,2,3,4
+CLIENT_1_SERVERS 0,1,2,3,4
+CLIENT_2_SERVERS 0,1,2,3,4
+
+# Client-to-Client connections
+# Format: CLIENT_<client_id>_CLIENTS <client_id1>,<client_id2>,...
+CLIENT_0_CLIENTS 1,2
+CLIENT_1_CLIENTS 0,2
+CLIENT_2_CLIENTS 0,1
+
+# Malicious servers configuration (0 for honest, 1 for malicious)
+# Format: SERVER_<server_id>_MALICIOUS <0/1>
+SERVER_0_MALICIOUS 0
+SERVER_1_MALICIOUS 0
+SERVER_2_MALICIOUS 0
+SERVER_3_MALICIOUS 1
+SERVER_4_MALICIOUS 0 
