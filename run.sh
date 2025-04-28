@@ -1,20 +1,25 @@
 #!/bin/bash
+# Script to build and run the OMNeT++ simulation
 
-# Script to compile and run the Remote Execution simulation
-# By B22CS061 & B22CS062
-# Create results directory if it doesn't exist
-mkdir -p results
+# Clear any previous output
+rm -f outputfile.txt
 
-# Generate message files
-echo "Generating message files..."
-opp_msgc src/RemoteExecution.msg
+# Clean the build directory
+make clean
 
-# Compile the project
-echo "Compiling project..."
+# Build the simulation
 make
 
-# Run the simulation
-echo "Running simulation..."
-./remoteexecution
+# Check if build was successful
+if [ $? -ne 0 ]; then
+    echo "Build failed. Please check for errors."
+    exit 1
+fi
 
-echo "Simulation complete. Results are in the 'results' directory." 
+# Run the simulation
+./src/RemoteExecution -c General -u Cmdenv
+
+# Display results
+echo "Simulation completed. Results saved to outputfile.txt"
+echo "Contents of outputfile.txt:"
+cat outputfile.txt 

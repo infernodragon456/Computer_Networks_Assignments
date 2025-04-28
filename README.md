@@ -1,176 +1,74 @@
-# Remote Execution Simulation with OMNeT++
+# P2P Remote Execution Simulation
 
-By B22CS061 & B22CS062
-
-This project simulates a distributed computing scenario where clients divide tasks into subtasks and send them to multiple servers. The system is designed to handle potentially malicious servers.
+This simulation implements a peer-to-peer (P2P) distributed remote execution system using OMNeT++. The system allows clients to distribute computational tasks across a network of nodes in a ring topology, with optimized message routing for efficient communication.
 
 ## Overview
 
-The simulation models a scenario where:
-1. Client nodes divide a task (finding maximum in array) into n subtasks
-2. Each subtask is sent to n/2+1 servers
-3. Servers process the subtasks (some may be malicious)
-4. Clients collect results, determine correct results by majority voting
-5. Clients rate servers and share ratings with other clients via gossip protocol
-6. In the second round, clients select top-rated servers based on these ratings
+The simulation creates a network of N client nodes arranged in a ring topology. Each client has a unique ID starting from 0. When a client needs to execute a task (finding the maximum element in an array), it divides the task into x subtasks, where x > N and each subtask has an ID i. Each subtask with ID i is sent to the client with ID i%N.
 
-## Project Structure
+The network uses Chord-like finger tables to achieve O(log N) message routing complexity, which is an optimization over the basic ring topology that would require O(N) message exchanges in the worst case.
 
-- `src/` - Source code directory
-  - `RemoteExecution.ned` - Network definition
-  - `RemoteExecution.msg` - Message definitions
-  - `ServerNode.cc` - Server implementation
-  - `ClientNode.cc` - Client implementation
-  - `NetworkBuilder.cc` - Dynamically builds the network based on topology
-- `config.txt` - Network topology configuration
-- `omnetpp.ini` - Simulation configuration
-- `outputfile.txt` - Output file for simulation results
+## Network Topology
 
-## Prerequisites
+The network topology is defined in `topo.txt` and includes:
+- Number of client nodes
+- Client-to-client connections (ring topology)
+- Chord finger tables for efficient routing
 
-- OMNeT++ 6.1 or later
-- C++ compiler compatible with C++11 or later
-- Make or CMake build system
+The NetworkBuilder module dynamically creates the network based on this configuration, establishing all necessary connections and generating the Chord finger tables.
 
-## Detailed Build and Run Instructions
+## Task Execution Process
 
-### 1. Setup Project Directory
+1. A client initiates a task by generating a random array
+2. The array is divided into x subtasks, each containing at least 2 elements
+3. Each subtask is assigned to a client based on the formula: clientID = subtaskID % numClients
+4. Subtasks are routed through the network using Chord finger tables
+5. Each client processes its assigned subtasks (finding the maximum element)
+6. Results are sent back to the initiating client
+7. The initiating client consolidates the results to find the final answer
 
-```bash
-# Create directories if they don't exist
-mkdir -p build
-```
+## Gossip Protocol
 
-### 2. Generate Message Classes
+After completing a task, clients participate in a gossip protocol to share information:
 
-First, generate the necessary message classes from the message definitions:
+1. A client generates a gossip message in the format: <timestamp>:<clientID>:<clientNumericID>
+2. The message is sent to all directly connected clients
+3. Upon receiving a new gossip message, a client forwards it to all other connected clients
+4. Once a client has received gossip messages from all N clients, it terminates
 
-```bash
-cd src
-opp_msgc RemoteExecution.msg
-cd ..
-```
+## Building and Running
 
-### 3. Build the Project
+To build and run the simulation:
 
-#### Using Make
+1. Make sure you have OMNeT++ installed
+2. Clone this repository
+3. Run the provided script:
+   ```
+   ./run.sh
+   ```
 
-```bash
-# Option 1: Using makemake and make
-cd src
-opp_makemake -f --deep
-make
-cd ..
-```
+This will compile the simulation, run it, and display the results.
 
-#### Using CMake
+## Configuration
 
-```bash
-# Option 2: Using CMake
-cd build
-cmake ..
-make
-cd ..
-```
+You can modify the network by editing `topo.txt`:
+- Change the number of clients (NUM_CLIENTS)
+- Define custom connections between clients
 
-#### Using OMNeT++ IDE
+The simulation parameters can be modified in `omnetpp.ini`.
 
-If you're using the OMNeT++ IDE:
-1. Launch OMNeT++ IDE
-2. Go to File > Import > Existing Projects into Workspace
-3. Select the root directory of this project
-4. Click "Finish"
-5. Right-click on the project in Project Explorer and select "Build Project"
+## Implementation Details
 
-### 4. Configure the Network
+- **NetworkBuilder.cc**: Creates the network topology, including Chord finger tables
+- **ClientNode.cc**: Implements client behavior, task execution, routing, and gossip protocol
+- **RemoteExecution.ned**: Network definition
+- **RemoteExecution.msg**: Message type definitions
 
-Edit the `config.txt` file to define your network topology:
+## Routing Algorithm
 
-```
-NUM_SERVERS 5
-NUM_CLIENTS 3
+The simulation uses a Chord-like routing algorithm that achieves O(log N) message complexity:
 
-CLIENT_0_SERVERS 0,1,2,3,4
-CLIENT_1_SERVERS 0,1,2,3,4
-CLIENT_2_SERVERS 0,1,2,3,4
-
-CLIENT_0_CLIENTS 1,2
-CLIENT_1_CLIENTS 0,2
-CLIENT_2_CLIENTS 0,1
-
-SERVER_0_MALICIOUS 0
-SERVER_1_MALICIOUS 0
-SERVER_2_MALICIOUS 0
-SERVER_3_MALICIOUS 1
-SERVER_4_MALICIOUS 0
-```
-
-This configuration:
-- Defines 5 servers and 3 clients
-- Connects each client to all servers
-- Creates a fully connected client network
-- Sets server 3 as malicious
-
-### 5. Run the Simulation
-
-#### Command Line Execution
-
-```bash
-# Run from build directory
-cd build
-./RemoteExecution
-```
-
-Or using the OMNeT++ runtime:
-
-```bash
-# Run from project root
-opp_run -m ./build/RemoteExecution
-```
-
-#### Using OMNeT++ IDE
-
-1. Right-click on the project in Project Explorer
-2. Select "Run As" > "OMNeT++ Simulation"
-3. Select the `omnetpp.ini` configuration file
-4. Click "Run"
-
-### 6. View Results
-
-The simulation results are written to:
-- Console output
-- `outputfile.txt` in the project root directory
-
-## Configuration Details
-
-### Network Topology (`config.txt`)
-
-- `NUM_SERVERS`: Number of server nodes
-- `NUM_CLIENTS`: Number of client nodes
-- `CLIENT_X_SERVERS`: List of server IDs that client X connects to
-- `CLIENT_X_CLIENTS`: List of client IDs that client X connects to
-- `SERVER_X_MALICIOUS`: Whether server X is malicious (0 for honest, 1 for malicious)
-
-### Simulation Settings (`omnetpp.ini`)
-
-The `omnetpp.ini` file contains simulation parameters such as:
-- Simulation duration
-- Random number generator seeds
-- Network builder settings
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Missing config.txt file**:
-   - The simulation will create a default topology if the file is not found.
-   - Ensure the file is in the correct location (project root or src directory).
-
-2. **Gate Size Issues**:
-   - If you encounter gate size errors, check your topology configuration.
-   - Ensure you don't have conflicting connections.
-
-3. **Build Errors**:
-   - Make sure all dependencies are installed.
-   - Ensure message classes are generated correctly.
-   - Check for C++ syntax errors in the code. 
+1. Each node maintains a finger table with log(N) entries
+2. The finger[i][k] entry points to node (i + 2^k) mod N
+3. When routing to a destination, a node forwards to the finger that most closely precedes the destination
+4. This allows messages to reach any destination in at most O(log N) hops 

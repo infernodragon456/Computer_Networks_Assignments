@@ -5,6 +5,7 @@
 #include <vector>
 #include <sstream>
 #include <unistd.h> // For getcwd
+#include <cmath>    // For log2 and pow
 // By B22CS061 & B22CS062
 using namespace omnetpp;
 
@@ -12,28 +13,26 @@ using namespace omnetpp;
  * NetworkBuilder module
  * 
  * Responsible for dynamically building the network topology based on configuration file.
- * This module reads the network configuration from a file (config.txt) and:
- * 1. Creates the specified number of server and client nodes
- * 2. Sets up all connections between clients and servers
- * 3. Sets up all connections between clients and other clients
- * 4. Configures server properties (e.g., whether they're malicious)
+ * This module reads the network configuration from a file (topo.txt) and:
+ * 1. Creates the specified number of client nodes
+ * 2. Sets up ring topology connections between clients
+ * 3. Sets up chord finger table connections for efficient routing
  */
 class NetworkBuilder : public cSimpleModule {
 private:
     std::string topoFileName;  // Path to the topology configuration file
-    int numServers;            // Total number of servers in the network
     int numClients;            // Total number of clients in the network
     
     // Maps to store connection information
-    std::map<int, std::vector<int>> clientToServerConnections;  // Maps client ID to list of server IDs
-    std::map<int, std::vector<int>> clientToClientConnections;  // Maps client ID to list of client IDs
-    std::map<int, bool> serverMalicious;                        // Maps server ID to malicious flag
+    std::map<int, std::vector<int>> clientConnections;  // Maps client ID to list of client IDs
+    std::map<int, std::vector<int>> chordFingerTables;  // Maps client ID to its chord finger table
 
 protected:
     virtual void initialize() override;     // Initialize the module and build the network
     virtual void handleMessage(cMessage *msg) override;   // Handle incoming messages
     void readTopoFile();                    // Read network topology from configuration file
     void setupNetwork();                    // Set up the network based on the topology
+    void generateChordFingerTables();       // Generate Chord finger tables for O(logN) routing
 };
 
 Define_Module(NetworkBuilder);
@@ -47,14 +46,14 @@ Define_Module(NetworkBuilder);
 void NetworkBuilder::initialize() {
     // Try different paths to find the configuration file
     const char* possiblePaths[] = {
-        "config.txt",
-        "./config.txt",
-        "../config.txt",
-        "../../config.txt",
-        "../../../config.txt",
-        "src/config.txt",
-        "./src/config.txt",
-        "../src/config.txt"
+        "topo.txt",
+        "./topo.txt",
+        "../topo.txt",
+        "../../topo.txt",
+        "../../../topo.txt",
+        "src/topo.txt",
+        "./src/topo.txt",
+        "../src/topo.txt"
     };
     
     bool fileFound = false;
@@ -64,7 +63,7 @@ void NetworkBuilder::initialize() {
             topoFileName = path;
             testFile.close();
             fileFound = true;
-            EV_INFO << "Found configuration file at: " << topoFileName << std::endl;
+            EV_INFO << "Found topology file at: " << topoFileName << std::endl;
             break;
         }
     }
@@ -75,33 +74,21 @@ void NetworkBuilder::initialize() {
         if (getcwd(cwd, sizeof(cwd)) != NULL) {
             EV_ERROR << "Current working directory: " << cwd << std::endl;
         }
-        EV_ERROR << "Could not find configuration file (config.txt) in any of the common locations." << std::endl;
+        EV_ERROR << "Could not find topology file (topo.txt) in any of the common locations." << std::endl;
         
-        // Create a default topology in memory if file cannot be found
-        EV_INFO << "Creating default topology in memory..." << std::endl;
-        numServers = 5;
-        numClients = 3;
+        // Create a default ring topology in memory if file cannot be found
+        EV_INFO << "Creating default ring topology in memory..." << std::endl;
+        numClients = 10;
         
-        // Default client to server connections
+        // Default client to client connections (ring topology)
         for (int i = 0; i < numClients; i++) {
-            for (int j = 0; j < numServers; j++) {
-                clientToServerConnections[i].push_back(j);
-            }
+            // Connect to successor and predecessor in ring
+            clientConnections[i].push_back((i + 1) % numClients);  // Successor
+            clientConnections[i].push_back((i - 1 + numClients) % numClients);  // Predecessor
         }
         
-        // Default client to client connections
-        for (int i = 0; i < numClients; i++) {
-            for (int j = 0; j < numClients; j++) {
-                if (i != j) {
-                    clientToClientConnections[i].push_back(j);
-                }
-            }
-        }
-        
-        // Default all servers are honest except one
-        for (int i = 0; i < numServers; i++) {
-            serverMalicious[i] = (i == 3);  // Make server 3 malicious by default
-        }
+        // Generate Chord finger tables
+        generateChordFingerTables();
     } else {
         // Read topology file
         readTopoFile();
@@ -109,6 +96,28 @@ void NetworkBuilder::initialize() {
     
     // Setup network
     setupNetwork();
+}
+
+/**
+ * Generate Chord finger tables for each client
+ * 
+ * For each client i, the finger table contains log(N) entries
+ * finger[i][k] = (i + 2^k) mod N, for 0 ≤ k < log(N)
+ */
+void NetworkBuilder::generateChordFingerTables() {
+    int m = static_cast<int>(ceil(log2(numClients))); // Number of bits needed to represent numClients
+    
+    for (int i = 0; i < numClients; i++) {
+        for (int k = 0; k < m; k++) {
+            int fingerNode = (i + static_cast<int>(pow(2, k))) % numClients;
+            chordFingerTables[i].push_back(fingerNode);
+            
+            // Add this connection to the client connections if not already present
+            if (std::find(clientConnections[i].begin(), clientConnections[i].end(), fingerNode) == clientConnections[i].end()) {
+                clientConnections[i].push_back(fingerNode);
+            }
+        }
+    }
 }
 
 /**
@@ -125,10 +134,8 @@ void NetworkBuilder::handleMessage(cMessage *msg) {
  * Read the network topology from the configuration file
  * 
  * Parses the configuration file to extract:
- * - Number of servers and clients
- * - Client-server connections
+ * - Number of clients
  * - Client-client connections
- * - Server malicious flags
  */
 void NetworkBuilder::readTopoFile() {
     std::ifstream file(topoFileName);
@@ -147,31 +154,9 @@ void NetworkBuilder::readTopoFile() {
         std::string key;
         iss >> key;
         
-        if (key == "NUM_SERVERS") {
-            iss >> numServers;
-            EV_INFO << "Read number of servers: " << numServers << std::endl;
-        }
-        else if (key == "NUM_CLIENTS") {
+        if (key == "NUM_CLIENTS") {
             iss >> numClients;
             EV_INFO << "Read number of clients: " << numClients << std::endl;
-        }
-        else if (key.find("CLIENT_") == 0 && key.find("_SERVERS") != std::string::npos) {
-            // Parse CLIENT_X_SERVERS
-            int clientId = std::stoi(key.substr(7, key.find("_SERVERS") - 7));
-            std::string serversStr;
-            iss >> serversStr;
-            
-            std::stringstream ss(serversStr);
-            std::string serverIdStr;
-            while (std::getline(ss, serverIdStr, ',')) {
-                clientToServerConnections[clientId].push_back(std::stoi(serverIdStr));
-            }
-            
-            EV_INFO << "Client " << clientId << " connected to servers: ";
-            for (int sId : clientToServerConnections[clientId]) {
-                EV_INFO << sId << " ";
-            }
-            EV_INFO << std::endl;
         }
         else if (key.find("CLIENT_") == 0 && key.find("_CLIENTS") != std::string::npos) {
             // Parse CLIENT_X_CLIENTS
@@ -182,27 +167,30 @@ void NetworkBuilder::readTopoFile() {
             std::stringstream ss(clientsStr);
             std::string neighborIdStr;
             while (std::getline(ss, neighborIdStr, ',')) {
-                clientToClientConnections[clientId].push_back(std::stoi(neighborIdStr));
+                clientConnections[clientId].push_back(std::stoi(neighborIdStr));
             }
             
             EV_INFO << "Client " << clientId << " connected to clients: ";
-            for (int cId : clientToClientConnections[clientId]) {
+            for (int cId : clientConnections[clientId]) {
                 EV_INFO << cId << " ";
             }
             EV_INFO << std::endl;
         }
-        else if (key.find("SERVER_") == 0 && key.find("_MALICIOUS") != std::string::npos) {
-            // Parse SERVER_X_MALICIOUS
-            int serverId = std::stoi(key.substr(7, key.find("_MALICIOUS") - 7));
-            int isMalicious;
-            iss >> isMalicious;
-            serverMalicious[serverId] = (isMalicious == 1);
-            
-            EV_INFO << "Server " << serverId << " malicious: " << serverMalicious[serverId] << std::endl;
-        }
     }
     
     file.close();
+    
+    // If no connections were specified in the file, create a default ring topology
+    if (clientConnections.empty()) {
+        for (int i = 0; i < numClients; i++) {
+            // Connect to successor and predecessor in ring
+            clientConnections[i].push_back((i + 1) % numClients);  // Successor
+            clientConnections[i].push_back((i - 1 + numClients) % numClients);  // Predecessor
+        }
+    }
+    
+    // Generate Chord finger tables
+    generateChordFingerTables();
 }
 
 /**
@@ -211,7 +199,7 @@ void NetworkBuilder::readTopoFile() {
  * This method:
  * 1. Sets network parameters
  * 2. Calculates required gate sizes for all modules
- * 3. Sets up client and server parameters
+ * 3. Sets up client parameters
  * 4. Creates all connections between modules
  */
 void NetworkBuilder::setupNetwork() {
@@ -219,51 +207,22 @@ void NetworkBuilder::setupNetwork() {
     cModule *network = getParentModule();
     
     // Set parameters for the network
-    network->par("numServers").setIntValue(numServers);
     network->par("numClients").setIntValue(numClients);
     
-    // Get server and client modules
-    cModule **servers = new cModule*[numServers];
+    // Get client modules
     cModule **clients = new cModule*[numClients];
-    
-    // Initialize all modules and set parameters first
-    for (int i = 0; i < numServers; i++) {
-        servers[i] = network->getSubmodule("server", i);
-        if (servers[i]) {
-            // Set malicious parameter
-            servers[i]->par("malicious").setBoolValue(serverMalicious[i]);
-        } else {
-            EV_ERROR << "Server module " << i << " not found." << std::endl;
-        }
-    }
     
     // Pre-calculate gate counts for each client
     std::vector<int> clientOutGateCount(numClients);
     std::vector<int> clientInGateCount(numClients);
     
     for (int i = 0; i < numClients; i++) {
-        // Count gates needed for server connections
-        int serverGateCount = clientToServerConnections[i].size();
-        
         // Count gates needed for client connections
-        int clientGateCount = clientToClientConnections[i].size();
+        int clientGateCount = clientConnections[i].size();
         
         // Total gates needed for this client
-        clientOutGateCount[i] = serverGateCount + clientGateCount;
-        clientInGateCount[i] = serverGateCount + clientGateCount; // Same for in-gates
-    }
-    
-    // Pre-calculate gate counts for each server
-    std::vector<int> serverInGateCount(numServers, 0);
-    std::vector<int> serverOutGateCount(numServers, 0);
-    
-    for (int i = 0; i < numClients; i++) {
-        for (int serverId : clientToServerConnections[i]) {
-            if (serverId >= 0 && serverId < numServers) {
-                serverInGateCount[serverId]++;
-                serverOutGateCount[serverId]++;
-            }
-        }
+        clientOutGateCount[i] = clientGateCount;
+        clientInGateCount[i] = clientGateCount; // Same for in-gates
     }
     
     // Set up clients with parameters and gate sizes
@@ -281,43 +240,28 @@ void NetworkBuilder::setupNetwork() {
                 EV_INFO << "Set client " << i << " in gate size to " << clientInGateCount[i] << std::endl;
             }
             
-            // Set server connections as parameter
+            // Set client connections as parameter
             std::stringstream ss;
             bool first = true;
-            for (int serverId : clientToServerConnections[i]) {
-                if (!first) ss << ",";
-                ss << serverId;
-                first = false;
-            }
-            clients[i]->par("connectedServers").setStringValue(ss.str());
-            
-            // Set client connections as parameter
-            ss.str("");
-            ss.clear();
-            first = true;
-            for (int clientId : clientToClientConnections[i]) {
+            for (int clientId : clientConnections[i]) {
                 if (!first) ss << ",";
                 ss << clientId;
                 first = false;
             }
             clients[i]->par("connectedClients").setStringValue(ss.str());
+            
+            // Set chord finger table as parameter
+            ss.str("");
+            ss.clear();
+            first = true;
+            for (int fingerId : chordFingerTables[i]) {
+                if (!first) ss << ",";
+                ss << fingerId;
+                first = false;
+            }
+            clients[i]->par("chordFingerTable").setStringValue(ss.str());
         } else {
             EV_ERROR << "Client module " << i << " not found." << std::endl;
-        }
-    }
-    
-    // Set up server gate sizes
-    for (int i = 0; i < numServers; i++) {
-        if (servers[i]) {
-            if (serverInGateCount[i] > 0) {
-                servers[i]->setGateSize("in", serverInGateCount[i]);
-                EV_INFO << "Set server " << i << " in gate size to " << serverInGateCount[i] << std::endl;
-            }
-            
-            if (serverOutGateCount[i] > 0) {
-                servers[i]->setGateSize("out", serverOutGateCount[i]);
-                EV_INFO << "Set server " << i << " out gate size to " << serverOutGateCount[i] << std::endl;
-            }
         }
     }
     
@@ -325,43 +269,13 @@ void NetworkBuilder::setupNetwork() {
     // Track used gate indices for each module
     std::vector<int> clientOutGateIndex(numClients, 0);
     std::vector<int> clientInGateIndex(numClients, 0);
-    std::vector<int> serverInGateIndex(numServers, 0);
-    std::vector<int> serverOutGateIndex(numServers, 0);
     
-    // Create connections between clients and servers
+    // Create connections between clients
     for (int i = 0; i < numClients; i++) {
         if (!clients[i]) continue;
         
-        for (int j = 0; j < clientToServerConnections[i].size(); j++) {
-            int serverId = clientToServerConnections[i][j];
-            if (serverId < 0 || serverId >= numServers || !servers[serverId]) continue;
-            
-            // Get next available gates
-            cGate *clientOutGate = clients[i]->gate("out", clientOutGateIndex[i]++);
-            cGate *serverInGate = servers[serverId]->gate("in", serverInGateIndex[serverId]++);
-            cGate *serverOutGate = servers[serverId]->gate("out", serverOutGateIndex[serverId]++);
-            cGate *clientInGate = clients[i]->gate("in", clientInGateIndex[i]++);
-            
-            // Set channel type for client->server connection
-            cDatarateChannel *channelToServer = cDatarateChannel::create("channelToServer");
-            channelToServer->setDatarate(100000000); // 100 Mbps
-            channelToServer->setDelay(0.01); // 10 ms
-            
-            // Set channel type for server->client connection
-            cDatarateChannel *channelToClient = cDatarateChannel::create("channelToClient");
-            channelToClient->setDatarate(100000000); // 100 Mbps
-            channelToClient->setDelay(0.01); // 10 ms
-            
-            // Connect gates with separate channels
-            clientOutGate->connectTo(serverInGate, channelToServer);
-            serverOutGate->connectTo(clientInGate, channelToClient);
-            
-            EV_INFO << "Created connection between client " << i << " and server " << serverId << std::endl;
-        }
-        
-        // Create connections between clients
-        for (int j = 0; j < clientToClientConnections[i].size(); j++) {
-            int neighborId = clientToClientConnections[i][j];
+        for (int j = 0; j < clientConnections[i].size(); j++) {
+            int neighborId = clientConnections[i][j];
             if (neighborId < 0 || neighborId >= numClients || !clients[neighborId]) continue;
             
             // Get next available gates
@@ -380,6 +294,5 @@ void NetworkBuilder::setupNetwork() {
         }
     }
     
-    delete[] servers;
     delete[] clients;
 } 

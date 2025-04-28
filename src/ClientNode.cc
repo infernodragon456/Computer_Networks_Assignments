@@ -10,6 +10,7 @@
 #include <ctime>
 #include <unordered_map>
 #include <random>
+#include <cmath>
 #include "RemoteExecution_m.h"
 // By B22CS061 & B22CS062
 using namespace omnetpp;
@@ -18,24 +19,32 @@ class ClientNode : public cSimpleModule {
 private:
     // Client identification
     std::string clientId;
-    int numServers;
-    std::vector<int> connectedServerIds;
+    int clientNumericId;
+    int numClients;
     std::vector<int> connectedClientIds;
+    std::vector<int> fingerTable;     // Chord finger table for efficient routing
     
     // Task management
     int currentTaskId;
-    std::vector<int> taskArray;  // Array for the current task
-    int taskRound;               // Current round (0 for first, 1 for second)
+    std::vector<int> taskArray;       // Array for the current task
+    int subtaskCount;                 // Number of subtasks to divide task into
+    bool isExecutingTask;             // Flag to indicate if client is currently executing a task
     
-    // Server ratings and results tracking
-    std::map<int, double> serverRatings;  // Server ID -> Rating
-    std::map<int, std::map<int, std::set<int>>> subtaskResults;  // TaskID -> (SubtaskID -> Set of results)
-    
-    // Store actual result messages for later reference
-    std::map<int, std::map<int, std::map<int, std::pair<bool, int>>>> serverResponses;  // TaskID -> (SubtaskID -> (ServerID -> (IsValid, Result)))
+    // Subtask tracking
+    struct SubtaskInfo {
+        int taskId;
+        int subtaskId;
+        std::vector<int> values;
+        int result;
+        bool completed;
+    };
+    std::map<int, SubtaskInfo> mySubtasks;  // Subtasks assigned to this client (subtaskId -> info)
+    std::map<int, std::map<int, int>> taskResults;  // taskId -> (subtaskId -> result)
+    std::map<int, int> pendingResults;      // taskId -> count of pending subtasks
     
     // Gossip protocol
     std::map<std::string, bool> messageLog;  // Message hash -> Seen before?
+    int receivedGossipCount;               // Count of unique gossip messages received
     
     // Output handling
     std::ofstream outFile;
@@ -44,20 +53,25 @@ private:
     simtime_t gossipInterval;
     cMessage *gossipTimer;
     cMessage *taskTimer;
-
+    
 protected:
     virtual void initialize() override;
     virtual void handleMessage(cMessage *msg) override;
     virtual void finish() override;
     
     // Task management
-    void scheduleTask();
+    void initiateTask();
     void executeTask();
     void generateRandomArray(int size);
     std::vector<std::vector<int>> divideArray(int numSubtasks);
-    std::vector<int> selectServersForSubtask();
-    void sendSubtaskToServer(int serverId, int subtaskId, const std::vector<int>& values);
+    void sendSubtaskToDestination(int taskId, int subtaskId, const std::vector<int>& values);
+    int findNextHopToDestination(int destinationId);
     void processTaskResults(int taskId);
+    
+    // Subtask execution
+    int findMaxElement(const std::vector<int>& values);
+    void handleSubtask(TaskMessage *msg);
+    void sendSubtaskResult(int taskId, int subtaskId, int result, const char* destinationId);
     
     // Gossip protocol
     void startGossiping();
@@ -71,33 +85,32 @@ Define_Module(ClientNode);
 
 void ClientNode::initialize() {
     clientId = par("id").stdstringValue();
-    numServers = par("numServers").intValue();
+    clientNumericId = par("clientId").intValue();
+    numClients = par("numClients").intValue();
     
-    // Parse connected servers and clients
-    std::string connectedServersStr = par("connectedServers").stdstringValue();
+    // Parse connected clients
     std::string connectedClientsStr = par("connectedClients").stdstringValue();
+    std::string fingerTableStr = par("chordFingerTable").stdstringValue();
     
-    // Parse comma-separated values
-    std::stringstream ss_servers(connectedServersStr);
-    std::string serverIdStr;
-    while (std::getline(ss_servers, serverIdStr, ',')) {
-        connectedServerIds.push_back(std::stoi(serverIdStr));
-    }
-    
+    // Parse comma-separated client connections
     std::stringstream ss_clients(connectedClientsStr);
     std::string clientIdStr;
     while (std::getline(ss_clients, clientIdStr, ',')) {
         connectedClientIds.push_back(std::stoi(clientIdStr));
     }
     
+    // Parse comma-separated finger table entries
+    std::stringstream ss_fingers(fingerTableStr);
+    std::string fingerIdStr;
+    while (std::getline(ss_fingers, fingerIdStr, ',')) {
+        fingerTable.push_back(std::stoi(fingerIdStr));
+    }
+    
     // Initialize other variables
     currentTaskId = 0;
-    taskRound = 0;
-    
-    // Initialize server ratings to 0.5 (neutral)
-    for (int i = 0; i < numServers; i++) {
-        serverRatings[i] = 0.5;
-    }
+    subtaskCount = numClients * 2;  // Ensure x > N as per assignment
+    isExecutingTask = false;
+    receivedGossipCount = 0;
     
     // Setup output file
     std::string filename = "outputfile.txt";
@@ -107,28 +120,25 @@ void ClientNode::initialize() {
     }
     
     // Log initialization
-    EV_INFO << "Client " << clientId << " initialized with " << connectedServerIds.size() 
-            << " server connections and " << connectedClientIds.size() << " client connections" << std::endl;
-    outFile << "Client " << clientId << " initialized with " << connectedServerIds.size() 
-            << " server connections and " << connectedClientIds.size() << " client connections" << std::endl;
+    EV_INFO << "Client " << clientId << " (ID " << clientNumericId << ") initialized with " 
+            << connectedClientIds.size() << " direct connections" << std::endl;
+    outFile << "Client " << clientId << " (ID " << clientNumericId << ") initialized with " 
+            << connectedClientIds.size() << " direct connections" << std::endl;
     
     // Setup timers
     gossipInterval = 5.0;
     gossipTimer = new cMessage("gossipTimer");
     taskTimer = new cMessage("taskTimer");
     
-    // Schedule first task with a random delay
-    scheduleAt(simTime() + exponential(1.0), taskTimer);
+    // Only client 0 initiates a task at the start
+    if (clientNumericId == 0) {
+        scheduleAt(simTime() + 1.0, taskTimer);
+    }
 }
 
 void ClientNode::handleMessage(cMessage *msg) {
     if (msg == taskTimer) {
-        executeTask();
-        
-        // Schedule next task if we haven't completed both rounds
-        if (taskRound < 2) {
-            scheduleAt(simTime() + 20.0, taskTimer);
-        }
+        initiateTask();
     }
     else if (msg == gossipTimer) {
         sendGossipToClients();
@@ -136,47 +146,103 @@ void ClientNode::handleMessage(cMessage *msg) {
         // Schedule next gossip
         scheduleAt(simTime() + gossipInterval, gossipTimer);
     }
-    else if (ResultMessage *resultMsg = dynamic_cast<ResultMessage *>(msg)) {
-        // Process result from server
-        int taskId = resultMsg->getTaskId();
-        int subtaskId = resultMsg->getSubtaskId();
-        int result = resultMsg->getResult();
-        int senderId = std::stoi(resultMsg->getSourceId() + 6); // Extract server ID from "serverX"
-        bool isValid = resultMsg->isValid();
+    else if (TaskMessage *taskMsg = dynamic_cast<TaskMessage *>(msg)) {
+        // Process incoming task message
+        // Check if this task is meant for us or needs to be forwarded
+        const char* destId = taskMsg->getDestinationId();
+        std::string destIdStr(destId);
         
-        EV_INFO << "Client " << clientId << " received result " << result 
-                << " for task " << taskId << ", subtask " << subtaskId 
-                << " from server " << senderId << std::endl;
-        outFile << "Client " << clientId << " received result " << result 
-                << " for task " << taskId << ", subtask " << subtaskId 
-                << " from server " << senderId << std::endl;
-        
-        // Store the result
-        subtaskResults[taskId][subtaskId].insert(result);
-        serverResponses[taskId][subtaskId][senderId] = std::make_pair(isValid, result);
-        
-        // Check if we have all results for this task
-        if (serverResponses[taskId].size() == taskArray.size() / 2) {
-            bool allComplete = true;
-            for (const auto& subtask : serverResponses[taskId]) {
-                if (subtask.second.size() < (numServers / 2 + 1)) {
-                    allComplete = false;
+        if (destIdStr == clientId) {
+            // Task is for this client, process it
+            handleSubtask(taskMsg);
+        } else {
+            // Task needs to be forwarded to another client
+            int destClientId = std::stoi(destIdStr.substr(6)); // Extract ID from "clientX"
+            int nextHop = findNextHopToDestination(destClientId);
+            
+            // Update forwarding path
+            EV_INFO << "Client " << clientId << " forwarding task " << taskMsg->getTaskId() 
+                    << " subtask " << taskMsg->getSubtaskId() 
+                    << " to client " << nextHop << std::endl;
+            outFile << "Client " << clientId << " forwarding task " << taskMsg->getTaskId() 
+                    << " subtask " << taskMsg->getSubtaskId() 
+                    << " to client " << nextHop << std::endl;
+            
+            // Find the gate index for the next hop
+            int gateIndex = -1;
+            for (int i = 0; i < connectedClientIds.size(); i++) {
+                if (connectedClientIds[i] == nextHop) {
+                    gateIndex = i;
                     break;
                 }
             }
             
-            if (allComplete) {
+            if (gateIndex != -1) {
+                // Update the destination ID to keep track of the final destination
+                send(taskMsg, "out", gateIndex);
+            } else {
+                EV_ERROR << "Client " << clientId << " could not find gate for client " << nextHop << std::endl;
+                outFile << "Client " << clientId << " could not find gate for client " << nextHop << std::endl;
+                delete taskMsg;
+            }
+        }
+    }
+    else if (ResultMessage *resultMsg = dynamic_cast<ResultMessage *>(msg)) {
+        // Process result from another client
+        const char* destId = resultMsg->getDestinationId();
+        std::string destIdStr(destId);
+        
+        if (destIdStr == clientId) {
+            // Result is for this client
+            int taskId = resultMsg->getTaskId();
+            int subtaskId = resultMsg->getSubtaskId();
+            int result = resultMsg->getResult();
+            const char* sourceId = resultMsg->getSourceId();
+            
+            EV_INFO << "Client " << clientId << " received result " << result 
+                    << " for task " << taskId << ", subtask " << subtaskId 
+                    << " from client " << sourceId << std::endl;
+            outFile << "Client " << clientId << " received result " << result 
+                    << " for task " << taskId << ", subtask " << subtaskId 
+                    << " from client " << sourceId << std::endl;
+            
+            // Store the result
+            taskResults[taskId][subtaskId] = result;
+            pendingResults[taskId]--;
+            
+            // Check if we have all results for this task
+            if (pendingResults[taskId] <= 0) {
                 // Process the task results
                 processTaskResults(taskId);
                 
                 // Start gossiping after completing a task
-                if (!gossipTimer->isScheduled()) {
-                    scheduleAt(simTime() + 1.0, gossipTimer);
+                startGossiping();
+                
+                // Mark task as complete
+                isExecutingTask = false;
+            }
+        } else {
+            // Result needs to be forwarded to another client
+            int destClientId = std::stoi(destIdStr.substr(6)); // Extract ID from "clientX"
+            int nextHop = findNextHopToDestination(destClientId);
+            
+            // Find the gate index for the next hop
+            int gateIndex = -1;
+            for (int i = 0; i < connectedClientIds.size(); i++) {
+                if (connectedClientIds[i] == nextHop) {
+                    gateIndex = i;
+                    break;
                 }
             }
+            
+            if (gateIndex != -1) {
+                send(resultMsg, "out", gateIndex);
+            } else {
+                EV_ERROR << "Client " << clientId << " could not find gate for client " << nextHop << std::endl;
+                outFile << "Client " << clientId << " could not find gate for client " << nextHop << std::endl;
+                delete resultMsg;
+            }
         }
-        
-        delete msg;
     }
     else if (GossipMessage *gossipMsg = dynamic_cast<GossipMessage *>(msg)) {
         processGossipMessage(gossipMsg);
@@ -187,47 +253,35 @@ void ClientNode::handleMessage(cMessage *msg) {
     }
 }
 
+void ClientNode::initiateTask() {
+    // Only start a new task if we're not already executing one
+    if (!isExecutingTask) {
+        isExecutingTask = true;
+        executeTask();
+    } else {
+        // Reschedule task execution for later
+        scheduleAt(simTime() + 5.0, taskTimer);
+    }
+}
+
 void ClientNode::executeTask() {
     // Generate a random array for the task
-    generateRandomArray(20 + taskRound * 10); // Larger array for second round
+    generateRandomArray(20 + 10 * (currentTaskId % 3)); // Vary array size
     
     EV_INFO << "Client " << clientId << " executing task " << currentTaskId 
-            << " in round " << taskRound << " with array size " << taskArray.size() << std::endl;
+            << " with array size " << taskArray.size() << std::endl;
     outFile << "Client " << clientId << " executing task " << currentTaskId 
-            << " in round " << taskRound << " with array size " << taskArray.size() << std::endl;
+            << " with array size " << taskArray.size() << std::endl;
     
-    // Divide the array into n subtasks
-    std::vector<std::vector<int>> subtasks = divideArray(numServers);
+    // Divide the array into subtasks
+    std::vector<std::vector<int>> subtasks = divideArray(subtaskCount);
     
-    // Send each subtask to n/2+1 servers
+    // Initialize pending count
+    pendingResults[currentTaskId] = subtasks.size();
+    
+    // Send each subtask to the appropriate client
     for (int subtaskId = 0; subtaskId < subtasks.size(); subtaskId++) {
-        std::vector<int> servers;
-        
-        if (taskRound == 0) {
-            // First round: random selection
-            servers = selectServersForSubtask();
-        } else {
-            // Second round: select top-rated servers
-            std::vector<std::pair<int, double>> sortedRatings;
-            for (const auto& rating : serverRatings) {
-                sortedRatings.push_back(rating);
-            }
-            
-            std::sort(sortedRatings.begin(), sortedRatings.end(), 
-                     [](const std::pair<int, double>& a, const std::pair<int, double>& b) {
-                         return a.second > b.second;
-                     });
-            
-            // Take top n/2+1 servers
-            for (int i = 0; i < numServers / 2 + 1 && i < sortedRatings.size(); i++) {
-                servers.push_back(sortedRatings[i].first);
-            }
-        }
-        
-        // Send the subtask to each selected server
-        for (int serverId : servers) {
-            sendSubtaskToServer(serverId, subtaskId, subtasks[subtaskId]);
-        }
+        sendSubtaskToDestination(currentTaskId, subtaskId, subtasks[subtaskId]);
     }
     
     currentTaskId++;
@@ -235,8 +289,12 @@ void ClientNode::executeTask() {
 
 void ClientNode::generateRandomArray(int size) {
     taskArray.resize(size);
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<> distrib(1, 1000);
+    
     for (int i = 0; i < size; i++) {
-        taskArray[i] = intuniform(1, 1000);
+        taskArray[i] = distrib(gen);
     }
 }
 
@@ -262,37 +320,19 @@ std::vector<std::vector<int>> ClientNode::divideArray(int numSubtasks) {
     return result;
 }
 
-std::vector<int> ClientNode::selectServersForSubtask() {
-    // Select n/2+1 random servers from the connected servers
-    int serversNeeded = numServers / 2 + 1;
-    std::vector<int> selectedServers;
+void ClientNode::sendSubtaskToDestination(int taskId, int subtaskId, const std::vector<int>& values) {
+    // Determine which client should handle this subtask: subtaskId % numClients
+    int targetClientId = subtaskId % numClients;
     
-    // If we have fewer connected servers than needed, use all of them
-    if (connectedServerIds.size() <= serversNeeded) {
-        return connectedServerIds;
-    }
+    // Find the next hop in the path to the target client
+    int nextHop = findNextHopToDestination(targetClientId);
     
-    // Randomly select servers
-    std::vector<int> serverIndices(connectedServerIds.size());
-    std::iota(serverIndices.begin(), serverIndices.end(), 0);
-    
-    std::random_device rd;
-    std::mt19937 g(rd());
-    std::shuffle(serverIndices.begin(), serverIndices.end(), g);
-    
-    for (int i = 0; i < serversNeeded; i++) {
-        selectedServers.push_back(connectedServerIds[serverIndices[i]]);
-    }
-    
-    return selectedServers;
-}
-
-void ClientNode::sendSubtaskToServer(int serverId, int subtaskId, const std::vector<int>& values) {
+    // Create task message
     TaskMessage *taskMsg = new TaskMessage();
     taskMsg->setSourceId(clientId.c_str());
-    taskMsg->setDestinationId(("server" + std::to_string(serverId)).c_str());
+    taskMsg->setDestinationId(("client" + std::to_string(targetClientId)).c_str());
     taskMsg->setTimestamp(simTime().inUnit(SIMTIME_S));
-    taskMsg->setTaskId(currentTaskId);
+    taskMsg->setTaskId(taskId);
     taskMsg->setSubtaskId(subtaskId);
     
     // Set the values array
@@ -301,10 +341,10 @@ void ClientNode::sendSubtaskToServer(int serverId, int subtaskId, const std::vec
         taskMsg->setValues(i, values[i]);
     }
     
-    // Find the gate index for this server
+    // Find the gate index for the next hop
     int gateIndex = -1;
-    for (int i = 0; i < connectedServerIds.size(); i++) {
-        if (connectedServerIds[i] == serverId) {
+    for (int i = 0; i < connectedClientIds.size(); i++) {
+        if (connectedClientIds[i] == nextHop) {
             gateIndex = i;
             break;
         }
@@ -312,15 +352,133 @@ void ClientNode::sendSubtaskToServer(int serverId, int subtaskId, const std::vec
     
     if (gateIndex != -1) {
         EV_INFO << "Client " << clientId << " sending subtask " << subtaskId 
-                << " of task " << currentTaskId << " to server " << serverId << std::endl;
+                << " of task " << taskId << " to client " << targetClientId 
+                << " via next hop " << nextHop << std::endl;
         outFile << "Client " << clientId << " sending subtask " << subtaskId 
-                << " of task " << currentTaskId << " to server " << serverId << std::endl;
+                << " of task " << taskId << " to client " << targetClientId 
+                << " via next hop " << nextHop << std::endl;
         
         send(taskMsg, "out", gateIndex);
     } else {
-        EV_ERROR << "Client " << clientId << " could not find gate for server " << serverId << std::endl;
-        outFile << "Client " << clientId << " could not find gate for server " << serverId << std::endl;
+        EV_ERROR << "Client " << clientId << " could not find gate for client " << nextHop << std::endl;
+        outFile << "Client " << clientId << " could not find gate for client " << nextHop << std::endl;
         delete taskMsg;
+    }
+}
+
+int ClientNode::findNextHopToDestination(int destinationId) {
+    // If we're directly connected to the destination, send it directly
+    if (std::find(connectedClientIds.begin(), connectedClientIds.end(), destinationId) != connectedClientIds.end()) {
+        return destinationId;
+    }
+    
+    // If this is for us, return our ID
+    if (destinationId == clientNumericId) {
+        return clientNumericId;
+    }
+    
+    // Use Chord finger table for efficient routing
+    // Find the largest entry in finger table that precedes the target ID
+    int clockwiseDistance = (destinationId - clientNumericId + numClients) % numClients;
+    
+    // If target is our successor, route directly
+    if (clockwiseDistance == 1) {
+        return (clientNumericId + 1) % numClients;
+    }
+    
+    // Find the closest preceding node in our finger table
+    for (int i = fingerTable.size() - 1; i >= 0; i--) {
+        int fingerNode = fingerTable[i];
+        int fingerDistance = (fingerNode - clientNumericId + numClients) % numClients;
+        
+        if (fingerDistance > 0 && fingerDistance < clockwiseDistance) {
+            return fingerNode;
+        }
+    }
+    
+    // If no suitable finger found, route to our successor
+    return (clientNumericId + 1) % numClients;
+}
+
+void ClientNode::handleSubtask(TaskMessage *msg) {
+    int taskId = msg->getTaskId();
+    int subtaskId = msg->getSubtaskId();
+    
+    EV_INFO << "Client " << clientId << " processing subtask " << subtaskId 
+            << " of task " << taskId << std::endl;
+    outFile << "Client " << clientId << " processing subtask " << subtaskId 
+            << " of task " << taskId << std::endl;
+    
+    // Extract values from the message
+    int numValues = msg->getValuesArraySize();
+    std::vector<int> values(numValues);
+    for (int i = 0; i < numValues; i++) {
+        values[i] = msg->getValues(i);
+    }
+    
+    // Perform computation (find maximum element)
+    int result = findMaxElement(values);
+    
+    // Create a subtask record
+    SubtaskInfo info;
+    info.taskId = taskId;
+    info.subtaskId = subtaskId;
+    info.values = values;
+    info.result = result;
+    info.completed = true;
+    mySubtasks[subtaskId] = info;
+    
+    // Send result back to the source
+    sendSubtaskResult(taskId, subtaskId, result, msg->getSourceId());
+    
+    delete msg;
+}
+
+int ClientNode::findMaxElement(const std::vector<int>& values) {
+    // Find the maximum element in the array
+    return *std::max_element(values.begin(), values.end());
+}
+
+void ClientNode::sendSubtaskResult(int taskId, int subtaskId, int result, const char* destinationId) {
+    // Create result message
+    ResultMessage *resultMsg = new ResultMessage();
+    resultMsg->setSourceId(clientId.c_str());
+    resultMsg->setDestinationId(destinationId);
+    resultMsg->setTimestamp(simTime().inUnit(SIMTIME_S));
+    resultMsg->setTaskId(taskId);
+    resultMsg->setSubtaskId(subtaskId);
+    resultMsg->setResult(result);
+    resultMsg->setIsValid(true); // Always valid (no malicious clients)
+    
+    // Extract numeric client ID from destination
+    std::string destStr(destinationId);
+    int destClientId = std::stoi(destStr.substr(6)); // Extract ID from "clientX"
+    
+    // Find next hop to destination
+    int nextHop = findNextHopToDestination(destClientId);
+    
+    // Find gate index
+    int gateIndex = -1;
+    for (int i = 0; i < connectedClientIds.size(); i++) {
+        if (connectedClientIds[i] == nextHop) {
+            gateIndex = i;
+            break;
+        }
+    }
+    
+    if (gateIndex != -1) {
+        EV_INFO << "Client " << clientId << " sending result " << result 
+                << " for task " << taskId << ", subtask " << subtaskId 
+                << " to " << destinationId << " via next hop " << nextHop << std::endl;
+        outFile << "Client " << clientId << " sending result " << result 
+                << " for task " << taskId << ", subtask " << subtaskId 
+                << " to " << destinationId << " via next hop " << nextHop << std::endl;
+        
+        send(resultMsg, "out", gateIndex);
+    } else {
+        EV_ERROR << "Client " << clientId << " could not find gate for client " << nextHop << std::endl;
+        outFile << "Client " << clientId << " could not find gate for client " << nextHop << std::endl;
+        delete resultMsg;
     }
 }
 
@@ -328,75 +486,32 @@ void ClientNode::processTaskResults(int taskId) {
     EV_INFO << "Client " << clientId << " processing results for task " << taskId << std::endl;
     outFile << "Client " << clientId << " processing results for task " << taskId << std::endl;
     
-    // For each subtask, determine the correct result by majority
-    std::map<int, int> subtaskCorrectResults;  // SubtaskID -> Correct result
-    
-    for (const auto& subtaskPair : subtaskResults[taskId]) {
-        int subtaskId = subtaskPair.first;
-        const std::set<int>& results = subtaskPair.second;
+    // Display all subtask results
+    for (const auto& resultPair : taskResults[taskId]) {
+        int subtaskId = resultPair.first;
+        int result = resultPair.second;
         
-        // Count occurrences of each result
-        std::map<int, int> resultCounts;
-        for (int result : results) {
-            resultCounts[result]++;
-        }
-        
-        // Find the result with the most occurrences
-        int maxCount = 0;
-        int correctResult = 0;
-        
-        for (const auto& countPair : resultCounts) {
-            if (countPair.second > maxCount) {
-                maxCount = countPair.second;
-                correctResult = countPair.first;
-            }
-        }
-        
-        subtaskCorrectResults[subtaskId] = correctResult;
-        
-        EV_INFO << "Client " << clientId << " determined correct result for task " << taskId 
-                << ", subtask " << subtaskId << " is " << correctResult << std::endl;
-        outFile << "Client " << clientId << " determined correct result for task " << taskId 
-                << ", subtask " << subtaskId << " is " << correctResult << std::endl;
+        EV_INFO << "Client " << clientId << " received result for task " << taskId 
+                << ", subtask " << subtaskId << ": " << result << std::endl;
+        outFile << "Client " << clientId << " received result for task " << taskId 
+                << ", subtask " << subtaskId << ": " << result << std::endl;
     }
     
-    // Find the final result (maximum of all subtask results)
+    // Compute final result (maximum of all subtask results)
     int finalResult = 0;
-    for (const auto& resultPair : subtaskCorrectResults) {
+    for (const auto& resultPair : taskResults[taskId]) {
         finalResult = std::max(finalResult, resultPair.second);
     }
     
     EV_INFO << "Client " << clientId << " final result for task " << taskId << " is " << finalResult << std::endl;
     outFile << "Client " << clientId << " final result for task " << taskId << " is " << finalResult << std::endl;
-    
-    // Update server ratings based on their responses
-    for (const auto& subtaskPair : serverResponses[taskId]) {
-        int subtaskId = subtaskPair.first;
-        int correctResult = subtaskCorrectResults[subtaskId];
-        
-        for (const auto& serverPair : subtaskPair.second) {
-            int serverId = serverPair.first;
-            // Get result from the map (isValid not used here)
-            int result = serverPair.second.second;
-            
-            // Check if server provided correct result
-            if (result == correctResult) {
-                serverRatings[serverId] += 0.1;  // Increase rating for correct results
-                EV_INFO << "Client " << clientId << " increasing rating for server " << serverId << std::endl;
-                outFile << "Client " << clientId << " increasing rating for server " << serverId << std::endl;
-            } else {
-                serverRatings[serverId] -= 0.1;  // Decrease rating for incorrect results
-                EV_INFO << "Client " << clientId << " decreasing rating for server " << serverId << std::endl;
-                outFile << "Client " << clientId << " decreasing rating for server " << serverId << std::endl;
-            }
-            
-            // Ensure ratings stay within bounds
-            serverRatings[serverId] = std::max(0.0, std::min(1.0, serverRatings[serverId]));
-        }
+}
+
+void ClientNode::startGossiping() {
+    // Schedule first gossip message
+    if (!gossipTimer->isScheduled()) {
+        scheduleAt(simTime() + 1.0, gossipTimer);
     }
-    
-    // Increment task round after processing
-    taskRound++;
 }
 
 void ClientNode::sendGossipToClients() {
@@ -420,9 +535,7 @@ void ClientNode::sendGossipToClients() {
         outFile << "Client " << clientId << " sending gossip to client " << connectedClientIds[i] 
                 << ": " << content << std::endl;
         
-        // Find the gate index for this client
-        int clientGateOffset = connectedServerIds.size(); // Client gates start after server gates
-        send(gossipMsg, "out", clientGateOffset + i);
+        send(gossipMsg, "out", i);
     }
 }
 
@@ -445,39 +558,29 @@ void ClientNode::processGossipMessage(GossipMessage *msg) {
     
     // Add to message log
     messageLog[hash] = true;
+    receivedGossipCount++;
     
-    // Parse the gossip content to update server ratings
-    // Format: <timestamp>:<clientIP>:<serverScores>
-    std::stringstream ss(content);
-    std::string timestampStr, clientIP, scoresStr;
-    
-    std::getline(ss, timestampStr, ':');
-    std::getline(ss, clientIP, ':');
-    std::getline(ss, scoresStr, ':');
-    
-    // Parse the scores (assuming format is "serverId1=score1,serverId2=score2,...")
-    std::stringstream scoresStream(scoresStr);
-    std::string scorePair;
-    
-    while (std::getline(scoresStream, scorePair, ',')) {
-        std::stringstream pairStream(scorePair);
-        std::string serverIdStr, scoreStr;
+    // If we've received gossip from all clients, terminate
+    if (receivedGossipCount >= numClients) {
+        EV_INFO << "Client " << clientId << " received gossip from all clients, terminating" << std::endl;
+        outFile << "Client " << clientId << " received gossip from all clients, terminating" << std::endl;
         
-        std::getline(pairStream, serverIdStr, '=');
-        std::getline(pairStream, scoreStr);
-        
-        int serverId = std::stoi(serverIdStr);
-        double score = std::stod(scoreStr);
-        
-        // Update our rating for this server (simple average)
-        serverRatings[serverId] = (serverRatings[serverId] + score) / 2.0;
+        // Cancel any pending events
+        if (gossipTimer->isScheduled()) {
+            cancelEvent(gossipTimer);
+        }
+        if (taskTimer->isScheduled()) {
+            cancelEvent(taskTimer);
+        }
     }
     
     // Forward to all other clients if this is the first time
     if (firstTime) {
         for (int i = 0; i < connectedClientIds.size(); i++) {
             int targetClientId = connectedClientIds[i];
-            int sourceClientId = std::stoi(msg->getSourceId() + 6); // Extract ID from "clientX"
+            const char* sourceId = msg->getSourceId();
+            std::string sourceStr(sourceId);
+            int sourceClientId = std::stoi(sourceStr.substr(6)); // Extract ID from "clientX"
             
             // Don't send back to the sender
             if (targetClientId != sourceClientId) {
@@ -488,16 +591,14 @@ void ClientNode::processGossipMessage(GossipMessage *msg) {
                 forwardMsg->setContent(content.c_str());
                 forwardMsg->setFirstTime(false);
                 
-                // Find the gate index for this client
-                int clientGateOffset = connectedServerIds.size(); // Client gates start after server gates
-                send(forwardMsg, "out", clientGateOffset + i);
+                send(forwardMsg, "out", i);
             }
         }
     }
 }
 
 std::string ClientNode::generateGossipContent() {
-    // Format: <timestamp>:<clientIP>:<serverScores>
+    // Format: <timestamp>:<clientIP>:<clientID>
     std::stringstream ss;
     
     // Add timestamp
@@ -506,15 +607,8 @@ std::string ClientNode::generateGossipContent() {
     // Add client ID
     ss << clientId << ":";
     
-    // Add server scores
-    bool first = true;
-    for (const auto& rating : serverRatings) {
-        if (!first) {
-            ss << ",";
-        }
-        ss << rating.first << "=" << rating.second;
-        first = false;
-    }
+    // Add numeric client ID
+    ss << clientNumericId;
     
     return ss.str();
 }
