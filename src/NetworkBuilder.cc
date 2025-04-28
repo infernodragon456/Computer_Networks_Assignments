@@ -14,7 +14,7 @@ using namespace omnetpp;
  * NetworkBuilder module
  * 
  * Responsible for dynamically building the network topology based on configuration file.
- * This module reads the network configuration from a file (topo.txt) and:
+ * This module reads the network configuration from a file (config.txt) and:
  * 1. Creates the specified number of client nodes
  * 2. Sets up ring topology connections between clients
  * 3. Sets up chord finger table connections for efficient routing
@@ -57,14 +57,14 @@ void NetworkBuilder::initialize() {
     
     // Try different paths to find the configuration file
     const char* possiblePaths[] = {
-        "topo.txt",
-        "./topo.txt",
-        "../topo.txt",
-        "../../topo.txt",
-        "../../../topo.txt",
-        "src/topo.txt",
-        "./src/topo.txt",
-        "../src/topo.txt"
+        "config.txt",
+        "./config.txt",
+        "../config.txt",
+        "../../config.txt",
+        "../../../config.txt",
+        "src/config.txt",
+        "./src/config.txt",
+        "../src/config.txt"
     };
     
     bool fileFound = false;
@@ -85,7 +85,7 @@ void NetworkBuilder::initialize() {
         if (getcwd(cwd, sizeof(cwd)) != NULL) {
             EV_INFO << "Current working directory: " << cwd << std::endl;
         }
-        EV_INFO << "Searching for topo.txt..." << std::endl;
+        EV_INFO << "Searching for config.txt..." << std::endl;
         
         // Create a default ring topology in memory if file cannot be found
         EV_INFO << "Creating default ring topology in memory..." << std::endl;

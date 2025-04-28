@@ -10,7 +10,7 @@ The network uses Chord-like finger tables to achieve O(log N) message routing co
 
 ## Network Topology
 
-The network topology is defined in `topo.txt` and includes:
+The network topology is defined in `config.txt` and includes:
 - Number of client nodes
 - Client-to-client connections (ring topology)
 - Chord finger tables for efficient routing
@@ -51,7 +51,7 @@ This will compile the simulation, run it, and display the results.
 
 ## Configuration
 
-You can modify the network by editing `topo.txt`:
+You can modify the network by editing `config.txt`:
 - Change the number of clients (NUM_CLIENTS)
 - Define custom connections between clients
 
