@@ -1,14 +1,14 @@
-# Makefile for Remote Execution simulation
+# Makefile for P2P Remote Execution simulation
 # By B22CS061 & B22CS062
 
 CC = g++
-CFLAGS = -Wall -std=c++11 $(shell opp_includepath)
+CFLAGS = -Wall -std=c++14 $(shell opp_includepath)
 LDFLAGS = $(shell opp_libs)
 
 # Source files
 SOURCES = $(wildcard src/*.cc) $(wildcard src/*_m.cc)
 OBJECTS = $(SOURCES:.cc=.o)
-EXECUTABLE = remoteexecution
+EXECUTABLE = src/RemoteExecution
 
 # Message files
 MSG_FILES = src/RemoteExecution.msg

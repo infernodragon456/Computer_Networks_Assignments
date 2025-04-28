@@ -6,6 +6,7 @@
 #include <sstream>
 #include <unistd.h> // For getcwd
 #include <cmath>    // For log2 and pow
+#include <algorithm>
 // By B22CS061 & B22CS062
 using namespace omnetpp;
 
@@ -44,6 +45,8 @@ Define_Module(NetworkBuilder);
  * and sets up the network connections and properties.
  */
 void NetworkBuilder::initialize() {
+    //setComponentInitializeOrder(1000); // This will make it run early
+    
     // Try different paths to find the configuration file
     const char* possiblePaths[] = {
         "topo.txt",
@@ -70,11 +73,8 @@ void NetworkBuilder::initialize() {
     
     if (!fileFound) {
         // Output current working directory for debugging
-        char cwd[1024];
-        if (getcwd(cwd, sizeof(cwd)) != NULL) {
-            EV_ERROR << "Current working directory: " << cwd << std::endl;
-        }
-        EV_ERROR << "Could not find topology file (topo.txt) in any of the common locations." << std::endl;
+        EV_INFO << "Current working directory: " << getcwd(NULL, 0) << endl;
+        EV_INFO << "Searching for topo.txt..." << endl;
         
         // Create a default ring topology in memory if file cannot be found
         EV_INFO << "Creating default ring topology in memory..." << std::endl;
