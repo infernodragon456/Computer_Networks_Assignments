@@ -6,6 +6,7 @@ message BaseMessage {
     string sourceId;     // ID of the sender
     string destinationId; // ID of the recipient
     int timestamp;       // Timestamp for ordering
+    int hopCount = 0;    // Hop count for detecting routing loops
 }
 
 // Task message from client to server

@@ -23,6 +23,7 @@ private:
     int numClients;
     std::vector<int> connectedClientIds;
     std::vector<int> fingerTable;     // Chord finger table for efficient routing
+    std::map<int, int> clientToGateMap; // Maps clientID to gate index
     
     // Task management
     int currentTaskId;
@@ -114,6 +115,27 @@ void ClientNode::initialize() {
         }
     }
     
+    // Discover all gates and map them to client IDs
+    int numGates = gateSize("out");
+    EV_INFO << "Client " << clientId << " has " << numGates << " out gates" << std::endl;
+    
+    // Create a mapping between gate index and connected client ID
+    // This will be different from what's in parameters since we defined connections in NED
+    for (int i = 0; i < numGates; i++) {
+        cGate *outGate = gate("out", i);
+        if (outGate && outGate->isConnected()) {
+            cModule *targetModule = outGate->getPathEndGate()->getOwnerModule();
+            if (targetModule) {
+                std::string targetName = targetModule->getName();
+                if (targetName == "client") {
+                    int targetIndex = targetModule->getIndex();
+                    clientToGateMap[targetIndex] = i;
+                    EV_INFO << "  Gate " << i << " is connected to client " << targetIndex << std::endl;
+                }
+            }
+        }
+    }
+    
     // Initialize other variables
     currentTaskId = 0;
     subtaskCount = numClients * 2;  // Ensure x > N as per assignment
@@ -129,9 +151,9 @@ void ClientNode::initialize() {
     
     // Log initialization
     EV_INFO << "Client " << clientId << " (ID " << clientNumericId << ") initialized with " 
-            << connectedClientIds.size() << " direct connections" << std::endl;
+            << clientToGateMap.size() << " direct connections" << std::endl;
     outFile << "Client " << clientId << " (ID " << clientNumericId << ") initialized with " 
-            << connectedClientIds.size() << " direct connections" << std::endl;
+            << clientToGateMap.size() << " direct connections" << std::endl;
     
     // Setup timers
     gossipInterval = 5.0;
@@ -166,6 +188,20 @@ void ClientNode::handleMessage(cMessage *msg) {
         } else {
             // Task needs to be forwarded to another client
             int destClientId = std::stoi(destIdStr.substr(6)); // Extract ID from "clientX"
+            
+            // Check for routing loops: if this message has already passed through
+            // this node, it's stuck in a loop
+            if (taskMsg->getHopCount() > numClients) {
+                EV_ERROR << "Client " << clientId << " detected routing loop for task " 
+                         << taskMsg->getTaskId() << " subtask " << taskMsg->getSubtaskId()
+                         << " to " << destId << ", dropping message" << std::endl;
+                delete msg;
+                return;
+            }
+            
+            // Increment hop count
+            taskMsg->setHopCount(taskMsg->getHopCount() + 1);
+            
             int nextHop = findNextHopToDestination(destClientId);
             
             // Update forwarding path
@@ -177,16 +213,9 @@ void ClientNode::handleMessage(cMessage *msg) {
                     << " to client " << nextHop << std::endl;
             
             // Find the gate index for the next hop
-            int gateIndex = -1;
-            for (int i = 0; i < connectedClientIds.size(); i++) {
-                if (connectedClientIds[i] == nextHop) {
-                    gateIndex = i;
-                    break;
-                }
-            }
-            
-            if (gateIndex != -1) {
-                // Update the destination ID to keep track of the final destination
+            auto gateIt = clientToGateMap.find(nextHop);
+            if (gateIt != clientToGateMap.end()) {
+                int gateIndex = gateIt->second;
                 send(taskMsg, "out", gateIndex);
             } else {
                 EV_ERROR << "Client " << clientId << " could not find gate for client " << nextHop << std::endl;
@@ -376,26 +405,26 @@ void ClientNode::sendSubtaskToDestination(int taskId, int subtaskId, const std::
         taskMsg->setValues(i, values[i]);
     }
     
-    // Find the gate index for the next hop
-    int gateIndex = -1;
-    for (int i = 0; i < connectedClientIds.size(); i++) {
-        if (connectedClientIds[i] == nextHop) {
-            gateIndex = i;
-            break;
-        }
-    }
-    
-    if (gateIndex != -1) {
+    // Find the gate index for the next hop using our gate mapping
+    auto gateIt = clientToGateMap.find(nextHop);
+    if (gateIt != clientToGateMap.end()) {
+        int gateIndex = gateIt->second;
+        
         EV_INFO << "Client " << clientId << " sending subtask " << subtaskId 
                 << " of task " << taskId << " to client " << targetClientId 
-                << " via next hop " << nextHop << std::endl;
+                << " via next hop " << nextHop << " (gate " << gateIndex << ")" << std::endl;
         outFile << "Client " << clientId << " sending subtask " << subtaskId 
                 << " of task " << taskId << " to client " << targetClientId 
                 << " via next hop " << nextHop << std::endl;
         
         send(taskMsg, "out", gateIndex);
     } else {
-        EV_ERROR << "Client " << clientId << " could not find gate for client " << nextHop << std::endl;
+        EV_ERROR << "Client " << clientId << " could not find gate for client " << nextHop 
+                << " (available: ";
+        for (const auto& pair : clientToGateMap) {
+            EV_ERROR << pair.first << " ";
+        }
+        EV_ERROR << ")" << std::endl;
         outFile << "Client " << clientId << " could not find gate for client " << nextHop << std::endl;
         delete taskMsg;
     }
