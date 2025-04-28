@@ -71,4 +71,16 @@ The simulation uses a Chord-like routing algorithm that achieves O(log N) messag
 1. Each node maintains a finger table with log(N) entries
 2. The finger[i][k] entry points to node (i + 2^k) mod N
 3. When routing to a destination, a node forwards to the finger that most closely precedes the destination
-4. This allows messages to reach any destination in at most O(log N) hops 
+4. This allows messages to reach any destination in at most O(log N) hops
+
+## Recent Updates
+
+We have implemented several improvements to enhance the simulation:
+
+1. **Routing Loop Detection**: Added a `hopCount` field to the base message class that increments each time a message is forwarded. If the hop count exceeds the number of nodes in the network, a routing loop is detected and the message is dropped to prevent infinite loops.
+
+2. **Improved Routing Efficiency**: The Chord-based routing algorithm now ensures efficient message delivery with O(log N) complexity, significantly reducing network traffic compared to a naive ring-based approach.
+
+3. **Robustness Enhancements**: Added error handling to better manage routing failures and ensure message delivery even when optimal routes are unavailable.
+
+These updates make the simulation more realistic and robust, especially in complex network topologies where routing loops might otherwise occur. 
