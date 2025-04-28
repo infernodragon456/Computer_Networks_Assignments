@@ -88,22 +88,30 @@ void ClientNode::initialize() {
     clientNumericId = par("clientId").intValue();
     numClients = par("numClients").intValue();
     
-    // Parse connected clients
+    // Parse connected clients and finger table
     std::string connectedClientsStr = par("connectedClients").stdstringValue();
     std::string fingerTableStr = par("chordFingerTable").stdstringValue();
     
-    // Parse comma-separated client connections
+    EV_INFO << "Client " << clientId << " initialized with parameters:" << std::endl;
+    EV_INFO << "  connectedClients = " << connectedClientsStr << std::endl;
+    EV_INFO << "  chordFingerTable = " << fingerTableStr << std::endl;
+    
+    // Parse comma-separated client connections 
     std::stringstream ss_clients(connectedClientsStr);
     std::string clientIdStr;
     while (std::getline(ss_clients, clientIdStr, ',')) {
-        connectedClientIds.push_back(std::stoi(clientIdStr));
+        if (!clientIdStr.empty()) {
+            connectedClientIds.push_back(std::stoi(clientIdStr));
+        }
     }
     
     // Parse comma-separated finger table entries
     std::stringstream ss_fingers(fingerTableStr);
     std::string fingerIdStr;
     while (std::getline(ss_fingers, fingerIdStr, ',')) {
-        fingerTable.push_back(std::stoi(fingerIdStr));
+        if (!fingerIdStr.empty()) {
+            fingerTable.push_back(std::stoi(fingerIdStr));
+        }
     }
     
     // Initialize other variables
@@ -273,11 +281,25 @@ void ClientNode::executeTask() {
     outFile << "Client " << clientId << " executing task " << currentTaskId 
             << " with array size " << taskArray.size() << std::endl;
     
+    // Determine number of subtasks - ensure x > N and each subtask has at least 2 elements
+    int maxSubtasks = taskArray.size() / 2;  // Each subtask needs at least 2 elements
+    subtaskCount = std::min(numClients * 2, maxSubtasks);  // Ensure x > N
+    
+    EV_INFO << "Client " << clientId << " dividing task into " << subtaskCount << " subtasks" << std::endl;
+    
     // Divide the array into subtasks
     std::vector<std::vector<int>> subtasks = divideArray(subtaskCount);
     
     // Initialize pending count
     pendingResults[currentTaskId] = subtasks.size();
+    
+    // Display subtask distribution information
+    EV_INFO << "Client " << clientId << " distribution of subtasks:" << std::endl;
+    for (int subtaskId = 0; subtaskId < subtasks.size(); subtaskId++) {
+        int targetClientId = subtaskId % numClients;
+        EV_INFO << "  Subtask " << subtaskId << " -> Client " << targetClientId 
+                << " (size: " << subtasks[subtaskId].size() << ")" << std::endl;
+    }
     
     // Send each subtask to the appropriate client
     for (int subtaskId = 0; subtaskId < subtasks.size(); subtaskId++) {
@@ -302,18 +324,31 @@ std::vector<std::vector<int>> ClientNode::divideArray(int numSubtasks) {
     std::vector<std::vector<int>> result;
     
     // Ensure each subtask has at least 2 elements
-    if (taskArray.size() / numSubtasks < 2) {
-        numSubtasks = taskArray.size() / 2;
+    int maxPossibleSubtasks = taskArray.size() / 2;
+    if (numSubtasks > maxPossibleSubtasks) {
+        EV_INFO << "Warning: Reducing subtask count from " << numSubtasks 
+                << " to " << maxPossibleSubtasks << " to ensure min 2 elements per subtask" << std::endl;
+        numSubtasks = maxPossibleSubtasks;
     }
     
+    // Distribute array elements evenly among subtasks
     int elementsPerSubtask = taskArray.size() / numSubtasks;
     int remainingElements = taskArray.size() % numSubtasks;
     
+    EV_INFO << "Dividing array of size " << taskArray.size() << " into " 
+            << numSubtasks << " subtasks with ~" << elementsPerSubtask << " elements each" << std::endl;
+    
     int startIdx = 0;
     for (int i = 0; i < numSubtasks; i++) {
-        int endIdx = startIdx + elementsPerSubtask + (i < remainingElements ? 1 : 0);
+        int extraElement = (i < remainingElements) ? 1 : 0;
+        int endIdx = startIdx + elementsPerSubtask + extraElement;
+        
         std::vector<int> subtask(taskArray.begin() + startIdx, taskArray.begin() + endIdx);
         result.push_back(subtask);
+        
+        EV_INFO << "  Subtask " << i << ": " << subtask.size() << " elements [" 
+                << startIdx << ":" << (endIdx-1) << "]" << std::endl;
+        
         startIdx = endIdx;
     }
     
@@ -367,37 +402,61 @@ void ClientNode::sendSubtaskToDestination(int taskId, int subtaskId, const std::
 }
 
 int ClientNode::findNextHopToDestination(int destinationId) {
-    // If we're directly connected to the destination, send it directly
-    if (std::find(connectedClientIds.begin(), connectedClientIds.end(), destinationId) != connectedClientIds.end()) {
-        return destinationId;
-    }
-    
-    // If this is for us, return our ID
+    // If this message is for ourselves, no need to route
     if (destinationId == clientNumericId) {
         return clientNumericId;
     }
     
-    // Use Chord finger table for efficient routing
-    // Find the largest entry in finger table that precedes the target ID
-    int clockwiseDistance = (destinationId - clientNumericId + numClients) % numClients;
-    
-    // If target is our successor, route directly
-    if (clockwiseDistance == 1) {
-        return (clientNumericId + 1) % numClients;
+    // If we're directly connected to the destination, route directly
+    if (std::find(connectedClientIds.begin(), connectedClientIds.end(), destinationId) != connectedClientIds.end()) {
+        EV_INFO << "Client " << clientId << " is directly connected to destination " << destinationId << std::endl;
+        return destinationId;
     }
     
+    // Calculate clockwise distance in the ring
+    int clockwiseDistance = (destinationId - clientNumericId + numClients) % numClients;
+    
+    // If target is our successor, route directly through the ring
+    if (clockwiseDistance == 1) {
+        int successor = (clientNumericId + 1) % numClients;
+        EV_INFO << "Client " << clientId << " routing to successor " << successor << std::endl;
+        return successor;
+    }
+    
+    // Use Chord finger table for O(log N) routing
     // Find the closest preceding node in our finger table
-    for (int i = fingerTable.size() - 1; i >= 0; i--) {
-        int fingerNode = fingerTable[i];
-        int fingerDistance = (fingerNode - clientNumericId + numClients) % numClients;
+    int bestFinger = -1;
+    int bestDistance = numClients + 1;
+    
+    EV_INFO << "Client " << clientId << " using finger table to route to " << destinationId 
+            << ", fingers: ";
+    for (int finger : fingerTable) {
+        EV_INFO << finger << " ";
+    }
+    EV_INFO << std::endl;
+    
+    for (int fingerNode : fingerTable) {
+        // Calculate distance from finger to destination (clockwise)
+        int fingerToDestDistance = (destinationId - fingerNode + numClients) % numClients;
         
-        if (fingerDistance > 0 && fingerDistance < clockwiseDistance) {
-            return fingerNode;
+        // The finger must be before the destination in clockwise direction
+        if (fingerToDestDistance > 0 && fingerToDestDistance < bestDistance) {
+            bestDistance = fingerToDestDistance;
+            bestFinger = fingerNode;
         }
     }
     
-    // If no suitable finger found, route to our successor
-    return (clientNumericId + 1) % numClients;
+    // If we found a suitable finger, use it
+    if (bestFinger != -1) {
+        EV_INFO << "Client " << clientId << " routing to " << destinationId 
+                << " via finger " << bestFinger << std::endl;
+        return bestFinger;
+    }
+    
+    // Last resort: Just route to our successor in the ring
+    int successor = (clientNumericId + 1) % numClients;
+    EV_INFO << "Client " << clientId << " (fallback) routing to successor " << successor << std::endl;
+    return successor;
 }
 
 void ClientNode::handleSubtask(TaskMessage *msg) {

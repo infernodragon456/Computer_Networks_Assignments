@@ -21,6 +21,7 @@ using namespace omnetpp;
  */
 class NetworkBuilder : public cSimpleModule {
 private:
+    bool enabled;               // Whether the network builder is enabled
     std::string topoFileName;  // Path to the topology configuration file
     int numClients;            // Total number of clients in the network
     
@@ -45,7 +46,14 @@ Define_Module(NetworkBuilder);
  * and sets up the network connections and properties.
  */
 void NetworkBuilder::initialize() {
-    //setComponentInitializeOrder(1000); // This will make it run early
+    // Check if the network builder is enabled
+    enabled = par("enabled").boolValue();
+    
+    // If not enabled, do nothing
+    if (!enabled) {
+        EV_INFO << "NetworkBuilder is disabled. Skipping dynamic network setup." << std::endl;
+        return;
+    }
     
     // Try different paths to find the configuration file
     const char* possiblePaths[] = {
@@ -73,8 +81,11 @@ void NetworkBuilder::initialize() {
     
     if (!fileFound) {
         // Output current working directory for debugging
-        EV_INFO << "Current working directory: " << getcwd(NULL, 0) << endl;
-        EV_INFO << "Searching for topo.txt..." << endl;
+        char cwd[1024];
+        if (getcwd(cwd, sizeof(cwd)) != NULL) {
+            EV_INFO << "Current working directory: " << cwd << std::endl;
+        }
+        EV_INFO << "Searching for topo.txt..." << std::endl;
         
         // Create a default ring topology in memory if file cannot be found
         EV_INFO << "Creating default ring topology in memory..." << std::endl;
